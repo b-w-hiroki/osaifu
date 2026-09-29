@@ -401,6 +401,10 @@ function walletView() {
       <button class="btn ghost sm" data-act="budget">変更</button>
     </div>
     <div class="set-row">
+      <div class="row-main"><div class="t">表計算用に書き出し</div><div class="s">全期間の記録をCSVで出力（Excel・Googleスプレッドシート対応）</div></div>
+      <button class="btn ghost sm" data-act="csv">CSV</button>
+    </div>
+    <div class="set-row">
       <div class="row-main"><div class="t">バックアップ</div><div class="s">データはこの端末内だけに保存されています</div></div>
       <button class="btn ghost sm" data-act="export">保存</button>
       <button class="btn ghost sm" data-act="import">復元</button>
@@ -630,7 +634,7 @@ async function enableNotify() {
 }
 
 async function notify(title, body) {
-  const opts = { body, icon: 'icons/icon.svg', badge: 'icons/icon.svg', tag: 'osaifu-due' };
+  const opts = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'osaifu-due' };
   try {
     const reg = await navigator.serviceWorker?.getRegistration();
     if (reg) { await reg.showNotification(title, opts); return; }
@@ -684,6 +688,24 @@ function exportIcs() {
   lines.push('END:VCALENDAR');
   download('osaifu-payments.ics', lines.join('\r\n'), 'text/calendar');
   toast('カレンダーファイルを書き出しました。開いて追加してください');
+}
+
+/* ---------- CSV export ---------- */
+function exportCsv() {
+  if (!S.txs.length) { toast('書き出す記録がありません'); return; }
+  const cell = (v) => { const t = String(v ?? ''); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  const TYPE = { expense: '支出', income: '収入', transfer: '振替' };
+  const rows = [['日付', '種類', 'カテゴリ', '金額', '財布', '移動先', 'メモ', '定期支払い']];
+  for (const t of [...S.txs].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))) {
+    rows.push([
+      t.date, TYPE[t.type] || t.type, t.type === 'transfer' ? '' : catOf(t.type, t.category).name, t.amount,
+      walletOf(t.walletId)?.name || '', t.type === 'transfer' ? walletOf(t.toWalletId)?.name || '' : '',
+      t.memo || '', t.billId ? S.bills.find((b) => b.id === t.billId)?.name || '' : '',
+    ]);
+  }
+  // 先頭のBOMでExcelでも文字化けしない
+  download(`osaifu-${todayStr()}.csv`, '\uFEFF' + rows.map((r) => r.map(cell).join(',')).join('\r\n'), 'text/csv');
+  toast(`${S.txs.length}件をCSVで書き出しました`);
 }
 
 /* ---------- backup ---------- */
@@ -767,6 +789,7 @@ document.addEventListener('click', (e) => {
     case 'add-on-day': return txSheet(null, { date: UI.sel });
     case 'budget': return budgetSheet();
     case 'ics': return exportIcs();
+    case 'csv': return exportCsv();
     case 'export': return download(`osaifu-backup-${todayStr()}.json`, JSON.stringify(S, null, 2), 'application/json');
     case 'import': return importJson();
     case 'reset':

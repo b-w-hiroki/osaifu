@@ -10,6 +10,7 @@
 - **財布**：現金・口座・カードの残高、財布間の振替、設定
 - **記録（＋ボタン）**：支出／収入／振替。金額→カテゴリ→財布の順で最短入力
 - 左右スワイプで月を切替、ダークモード対応
+- CSV 書き出し（Excel / Google スプレッドシート用、BOM 付き UTF-8）
 
 ## 通知について
 
@@ -26,4 +27,14 @@
 
 ```sh
 python3 -m http.server 8000   # http://localhost:8000
+```
+
+## テスト
+
+Playwright で主要な操作（記録・振替・定期支払い・.ics / CSV 書き出し・バックアップ復元・レイアウト崩れ）を検証します。PR ごとに GitHub Actions で自動実行されます。
+
+```sh
+npm install
+npx playwright install chromium
+npm test
 ```
