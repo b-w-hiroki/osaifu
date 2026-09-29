@@ -629,3 +629,142 @@ test('.icsにカードの引き落としと年1回の予定が入る', async ({ 
   expect(ics).toContain('RRULE:FREQ=MONTHLY;INTERVAL=12;BYMONTHDAY=5');
   expect(ics).toContain('DTSTART;VALUE=DATE:20261005'); // 今月(9月)には無いので10月が最初
 });
+
+const fixture = (name) => new URL(`./fixtures/${name}`, import.meta.url).pathname;
+const stmtBase = { ...cardBase, txs: [], bills: [] };
+
+async function importFile(page, file) {
+  await page.click('[data-tab=wallet]');
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act=import-csv]')]);
+  await chooser.setFiles(file);
+  await expect(page.locator('.sheet-panel h3')).toHaveText('明細を取り込む');
+}
+
+test('明細CSVの読み取り：引用符・改行・区切り・日付・金額の書き方', async ({ page }) => {
+  const r = await page.evaluate(() => ({
+    csv: parseCsv('a,"b,c","d ""x"""\n1,2,3\r\n\r\n"x\ny",5,6\n'),
+    tsv: parseCsv('日付\t内容\t金額\n2026/9/1\tテスト\t100'),
+    dates: ['2026/9/5', '2026-09-05', '2026年9月5日', '20260905', '令和8年9月5日', '26/09/05', '2026.9.5 12:30', '9/5', 'abc', '2026/13/40'].map(parseAnyDate),
+    amounts: ['¥1,200', '1,200円', '△500', '(500)', '500-', '-500', '−500', '１，２００', '', 'abc', '1.5'].map(parseAmountCell),
+  }));
+  expect(r.csv).toEqual([['a', 'b,c', 'd "x"'], ['1', '2', '3'], ['x\ny', '5', '6']]);
+  expect(r.tsv).toEqual([['日付', '内容', '金額'], ['2026/9/1', 'テスト', '100']]);
+  expect(r.dates).toEqual(['2026-09-05', '2026-09-05', '2026-09-05', '2026-09-05', '2026-09-05', '2026-09-05', '2026-09-05', '', '', '']);
+  expect(r.amounts).toEqual([1200, 1200, -500, -500, -500, -500, -500, 1200, null, null, 2]);
+});
+
+test('明細CSVの列の判定：主な銀行・カードの見出し', async ({ page }) => {
+  const g = (h) => page.evaluate((x) => guessColumns(x), h);
+  const idx = (headers, cols) => Object.fromEntries(Object.entries(cols).map(([k, i]) => [k, headers[i] ?? null]));
+  const cases = [
+    [['利用日', '利用店名・商品名', '利用者', '支払方法', '利用金額', '支払手数料', '支払総額'], { date: '利用日', desc: '利用店名・商品名', amount: '利用金額', out: null, in: null }],
+    [['日付', '摘要', '摘要内容', '支払い金額', '預かり金額', '差引残高', 'メモ'], { date: '日付', desc: '摘要内容', amount: null, out: '支払い金額', in: '預かり金額' }],
+    [['日付', '内容', '出金金額(円)', '入金金額(円)', '残高(円)', 'メモ'], { date: '日付', desc: '内容', amount: null, out: '出金金額(円)', in: '入金金額(円)' }],
+    [['取引日', '入出金(円)', '取引後残高(円)', '入出金内容'], { date: '取引日', desc: '入出金内容', amount: '入出金(円)', out: null, in: null }],
+    [['取引日', '受入金額（円）', '払出金額（円）', '詳細1', '詳細2'], { date: '取引日', desc: '詳細1', amount: null, out: '払出金額（円）', in: '受入金額（円）' }],
+    [['年月日', 'お引出し', 'お預入れ', 'お取り扱い内容', '残高'], { date: '年月日', desc: 'お取り扱い内容', amount: null, out: 'お引出し', in: 'お預入れ' }],
+    [['計算対象', '日付', '内容', '金額（円）', '保有金融機関', '大項目'], { date: '日付', desc: '内容', amount: '金額（円）', out: null, in: null }],
+    [['日付', '方法', 'カテゴリ', '品目', 'メモ', 'お店', '収入', '支出', '振替'], { date: '日付', desc: '品目', amount: null, out: '支出', in: '収入' }],
+  ];
+  for (const [headers, want] of cases) expect(idx(headers, await g(headers)), headers.join()).toEqual(want);
+});
+
+test('カードのCSV（UTF-8）を取り込む：カード宛て・カテゴリ推定・返金は収入・取り消し', async ({ page }) => {
+  await seed(page, stmtBase);
+  await importFile(page, fixture('card-utf8.csv'));
+  await expect(page.locator('[data-imp-wallet]')).toHaveValue('card'); // 「利用日」の見出しからカードと判断
+  await expect(page.locator('.imp-head')).toContainText('5件を取り込み');
+  await page.click('[data-imp-go]');
+
+  const s = await state(page);
+  const byMemo = (m) => s.txs.find((t) => t.memo.includes(m));
+  expect(s.txs).toHaveLength(5);
+  expect(s.txs.every((t) => t.walletId === 'card')).toBe(true);
+  expect(byMemo('セブン')).toMatchObject({ type: 'expense', amount: 520, date: '2026-09-03', category: 'food' });
+  expect(byMemo('NETFLIX')).toMatchObject({ amount: 1490, category: 'subsc' });
+  expect(byMemo('Suica')).toMatchObject({ amount: 3000, category: 'transport' });
+  expect(s.txs.find((t) => t.type === 'expense' && t.memo === 'ユニクロ 渋谷店')).toMatchObject({ amount: 4990, category: 'clothes' });
+  expect(byMemo('返品')).toMatchObject({ type: 'income', amount: 990 });
+  // カードの引き落とし予定にも反映される（9/20の分は10/15締め、9/25の返金も同じ回）
+  expect(await page.evaluate(() => [...cardCharges(walletOf('card')).entries()])).toEqual([['2026-10-10', 520 + 1490 + 3000], ['2026-11-10', 4990 - 990]]);
+
+  await page.locator('#toast button').click(); // 取り消し
+  expect((await state(page)).txs).toHaveLength(0);
+});
+
+test('同じ明細をもう一度取り込んでも二重にならない', async ({ page }) => {
+  await seed(page, stmtBase);
+  await importFile(page, fixture('card-utf8.csv'));
+  await page.click('[data-imp-go]');
+  await page.click('[data-tab=wallet]');
+  await importFile(page, fixture('card-utf8.csv'));
+  await expect(page.locator('.imp-head')).toContainText('0件を取り込み（5件は除外）');
+  await expect(page.locator('.imp-row small', { hasText: '取り込み済みの可能性' })).toHaveCount(5);
+  await expect(page.locator('[data-imp-go]')).toBeDisabled();
+  // 取り込み済みでも、手で選べば取り込める
+  await page.locator('[data-imp-all="1"]').click();
+  await expect(page.locator('[data-imp-go]')).toHaveText('5件を取り込む');
+});
+
+test('銀行のCSV（Shift_JIS・前置きの行・半角カナ）：入出金の列を分けて読み、カード引き落としは既定で除外', async ({ page }) => {
+  await seed(page, stmtBase);
+  await importFile(page, fixture('bank-sjis.csv'));
+  await expect(page.locator('[data-imp-wallet]')).toHaveValue('bank');
+  await expect(page.locator('[data-imp-mode]')).toHaveCount(0); // 出金・入金が別の列なので「金額の見方」は不要
+  await expect(page.locator('.imp-head')).toContainText('3件を取り込み（1件は除外）');
+  await expect(page.locator('.imp-row small', { hasText: 'カード引き落とし' })).toHaveCount(1);
+  await page.click('[data-imp-go]');
+
+  const s = await state(page);
+  expect(s.txs.map((t) => [t.date, t.type, t.amount, t.category, t.walletId]).sort()).toEqual([
+    ['2026-09-01', 'income', 280000, 'salary', 'bank'],
+    ['2026-09-10', 'expense', 8200, 'utility', 'bank'],
+    ['2026-09-27', 'expense', 85000, 'house', 'bank'],
+  ]);
+  expect(s.txs.find((t) => t.type === 'income').memo).toBe('フリコミ キユウヨ カ)サンプル'); // 半角カナは全角にそろえる
+});
+
+test('入出金が1列の銀行CSV：マイナスが支出になり、見方は切り替えられる', async ({ page }) => {
+  await seed(page, stmtBase);
+  await importFile(page, fixture('bank-signed.csv'));
+  await expect(page.locator('[data-imp-mode]')).toHaveValue('expenseNegative');
+  await expect(page.locator('.imp-amt.expense')).toHaveCount(1);
+  await page.selectOption('[data-imp-mode]', 'expensePositive'); // 逆にすると収支が入れ替わる
+  await expect(page.locator('.imp-amt.income')).toHaveCount(1);
+  await expect(page.locator('.imp-row', { hasText: '300,000' }).locator('.imp-amt')).toHaveClass(/expense/);
+  await page.selectOption('[data-imp-mode]', 'expenseNegative');
+  await page.click('[data-imp-go]');
+  const s = await state(page);
+  expect(s.txs.find((t) => t.memo === 'スーパー イオン')).toMatchObject({ type: 'expense', amount: 1200, date: '2026-09-03', category: 'food' });
+  expect(s.txs.find((t) => t.memo === 'キユウヨ')).toMatchObject({ type: 'income', amount: 300000, category: 'salary' });
+});
+
+test('見出しのないCSVは中身から列を推定し、列の対応は手で直せる', async ({ page }) => {
+  await seed(page, stmtBase);
+  await page.click('[data-tab=wallet]');
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act=import-csv]')]);
+  await chooser.setFiles({ name: 'vpass.csv', mimeType: 'text/csv', buffer: Buffer.from('2026/09/03,ローソン,520,1回,1,520\n2026/09/04,スターバックス,650,1回,1,650\n') });
+  await expect(page.locator('.imp-head')).toContainText('2件を取り込み');
+  await expect(page.locator('details.map')).not.toHaveAttribute('open', ''); // 判定できた時は閉じたまま
+  await page.click('details.map summary');
+  await expect(page.locator('[data-imp-col=amount]')).toHaveValue('2');
+  // 日付の列を「なし」にすると取り込めなくなり、列の対応が開いた状態で描き直される
+  await page.selectOption('[data-imp-col=date]', '-1');
+  await expect(page.locator('.imp-head')).toContainText('0件を取り込み');
+  await expect(page.locator('details.map')).toHaveAttribute('open', '');
+  await page.selectOption('[data-imp-col=date]', '0');
+  await page.click('[data-imp-go]');
+  expect((await state(page)).txs.map((t) => [t.memo, t.amount]).sort()).toEqual([['スターバックス', 650], ['ローソン', 520]]);
+});
+
+test('取り込む行を選べ、過去に同じ内容で付けたカテゴリを引き継ぐ', async ({ page }) => {
+  await seed(page, { ...stmtBase, txs: [{ id: 'h', type: 'expense', amount: 999, date: '2026-08-01', category: 'fun', walletId: 'card', memo: 'ユニクロ 渋谷店' }] });
+  await importFile(page, fixture('card-utf8.csv'));
+  await page.locator('.imp-row', { hasText: 'NETFLIX' }).locator('input').uncheck();
+  await expect(page.locator('.imp-head')).toContainText('4件を取り込み（1件は除外）');
+  await page.click('[data-imp-go]');
+  const s = await state(page);
+  expect(s.txs.some((t) => t.memo.includes('NETFLIX'))).toBe(false);
+  // 過去に「娯楽」で記録した店は、キーワード（衣服）ではなく過去のカテゴリを使う
+  expect(s.txs.find((t) => t.id !== 'h' && t.memo === 'ユニクロ 渋谷店')).toMatchObject({ category: 'fun' });
+});

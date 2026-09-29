@@ -665,6 +665,10 @@ function walletView() {
       <button class="btn ghost sm num" data-act="budget">${S.settings.budget ? yen(S.settings.budget) : '設定'}</button>
     </div>
     <div class="set-row">
+      <div class="row-main"><div class="t">明細の取り込み</div><div class="s">銀行・カードのCSV</div></div>
+      <button class="btn ghost sm" data-act="import-csv">選ぶ</button>
+    </div>
+    <div class="set-row">
       <div class="row-main"><div class="t">CSV書き出し</div></div>
       <button class="btn ghost sm" data-act="csv">CSV</button>
     </div>
@@ -1143,6 +1147,250 @@ function exportCsv() {
   toast(`${S.txs.length}件をCSVで書き出しました`);
 }
 
+/* ---------- 明細の取り込み（銀行・カードのCSV） ---------- */
+// 口座への直接連携は行わず、各社サイトからダウンロードしたCSVを端末内で読み込む（外部には送らない）
+
+/** UTF-8として読めなければ Shift_JIS（銀行・カードのCSVに多い）として読む */
+function decodeText(buf) {
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch (e) { text = new TextDecoder('shift_jis').decode(buf); }
+  return text.replace(/^﻿/, '');
+}
+
+/** CSV／TSV を行の配列にする（引用符・改行入りのセルに対応） */
+function parseCsv(text) {
+  const head = text.slice(0, 3000).split(/\r?\n/).slice(0, 8).join('\n');
+  const delim = (head.match(/\t/g) || []).length > (head.match(/,/g) || []).length ? '\t' : ',';
+  const rows = [];
+  let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c;
+    } else if (c === '"' && cell.trim() === '') { q = true; cell = ''; }
+    else if (c === delim) { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); cell = ''; rows.push(row); row = [];
+    } else cell += c;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows.map((r) => r.map((x) => x.trim())).filter((r) => r.some((x) => x !== ''));
+}
+
+/** 「2026/9/5」「2026年9月5日」「20260905」「令和8年9月5日」「26/09/05」などを YYYY-MM-DD に */
+function parseAnyDate(str) {
+  const t = String(str ?? '').normalize('NFKC').trim();
+  const ok = (y, mo, d) => (mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && y >= 1990 && y <= 2100 ? `${y}-${pad(mo)}-${pad(d)}` : '');
+  let m;
+  if ((m = t.match(/(\d{4})\s*[年/.\-]\s*(\d{1,2})\s*[月/.\-]\s*(\d{1,2})/))) return ok(+m[1], +m[2], +m[3]);
+  if ((m = t.match(/^(\d{4})(\d{2})(\d{2})(?!\d)/))) return ok(+m[1], +m[2], +m[3]);
+  if ((m = t.match(/令和\s*(\d{1,2}|元)\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})/))) return ok(2018 + (m[1] === '元' ? 1 : +m[1]), +m[2], +m[3]);
+  if ((m = t.match(/^(\d{2})[/.\-](\d{1,2})[/.\-](\d{1,2})$/))) return ok(2000 + +m[1], +m[2], +m[3]);
+  return '';
+}
+
+/** 「¥1,200」「1,200円」「△500」「(500)」「500-」などを数値に（マイナスは負）。読めなければ null */
+function parseAmountCell(str) {
+  let t = String(str ?? '').normalize('NFKC').trim();
+  if (!t) return null;
+  const neg = /^[△▲\-−]/.test(t) || /^\(.*\)$/.test(t) || /[-−]$/.test(t);
+  t = t.replace(/[¥円,\s()△▲\-−+]/g, '');
+  if (!/^\d+(\.\d+)?$/.test(t)) return null;
+  const n = Math.round(parseFloat(t));
+  return neg ? -n : n;
+}
+
+// 見出しから列を推定する（上にあるものほど優先）
+const HEADER_KEYS = {
+  date: [/利用日/, /取引日/, /年月日/, /日付/, /日にち/, /^日$/],
+  desc: [/利用店名|利用先/, /品目|お店|店名/, /摘要内容|取引内容|お取り扱い内容|入出金内容/, /内容|摘要|詳細/, /備考|メモ|明細/],
+  out: [/出金|引出|払出|支出/, /お?支払(い)?金額/],
+  in: [/入金|預入|預かり|受入|収入/],
+  amount: [/利用金額/, /支払総額/, /入出金/, /金額/],
+};
+function guessColumns(headers) {
+  const cols = { date: -1, desc: -1, amount: -1, out: -1, in: -1 };
+  const used = new Set();
+  // 「入出金内容」「入金先支店コード」のような説明・コードの列は、金額の列にしない
+  const TEXTY = /内容|摘要|詳細|メモ|備考|店名|利用先|品目|方法|区分|回数|利用者|カテゴリ|コード|番号|名義|支店/;
+  const usable = (h, idx, key) => !used.has(idx) && !/残高/.test(h) && !(['out', 'in', 'amount'].includes(key) && TEXTY.test(h));
+  for (const key of ['date', 'out', 'in', 'amount', 'desc']) {
+    for (const re of HEADER_KEYS[key]) {
+      const i = headers.findIndex((h, idx) => usable(h, idx, key) && re.test(h));
+      if (i >= 0) { cols[key] = i; used.add(i); break; }
+    }
+  }
+  // 出金と入金の両方があれば分けて読む。片方だけなら「金額」の列を優先する
+  if (!(cols.out >= 0 && cols.in >= 0)) {
+    if (cols.amount < 0 && cols.out >= 0) { cols.amount = cols.out; }
+    cols.out = -1; cols.in = -1;
+  }
+  return cols;
+}
+/** 見出しの行を探す（口座名などの前置きの行を飛ばす）。見つからなければ -1 */
+function findHeader(rows) {
+  for (let i = 0; i < Math.min(rows.length, 20); i++) {
+    const g = guessColumns(rows[i]);
+    if (g.date >= 0 && (g.amount >= 0 || (g.out >= 0 && g.in >= 0))) return i;
+  }
+  return -1;
+}
+/** 見出しがないCSV：中身から日付・内容・金額の列を推定（内容の次にある最初の数値の列を金額とする） */
+function guessByData(rows) {
+  const r = rows[0];
+  const cols = { date: r.findIndex((c) => parseAnyDate(c)), desc: -1, amount: -1, out: -1, in: -1 };
+  cols.desc = r.findIndex((c, i) => i !== cols.date && c && parseAmountCell(c) === null && !parseAnyDate(c));
+  const from = Math.max(cols.date, cols.desc) + 1;
+  for (let i = from; i < r.length; i++) if (parseAmountCell(r[i]) !== null) { cols.amount = i; break; }
+  return cols;
+}
+
+const IMPORT_RULES = [
+  [/家賃|賃貸|住宅ローン|管理費|ヤチン/, 'house'],
+  [/電気|ガス(?!ト)|水道|東京電力|関西電力|東京ガス|大阪ガス|デンキ|デンリヨク|デンリョク|ガスダイ|スイドウ/, 'utility'],
+  [/ドコモ|docomo|ソフトバンク|softbank|楽天モバイル|ワイモバイル|ahamo|povo|NTT|光回線|プロバイダ|OCN|インターネット/i, 'phone'],
+  [/netflix|spotify|amazon\s*prime|youtube|disney|hulu|u-next|dazn|adobe|icloud|サブスク/i, 'subsc'],
+  [/suica|pasmo|icoca|モバイルsuica|ＪＲ|JR|バス|タクシー|鉄道|高速|\bETC\b|ガソリン|ENEOS|出光|コスモ|駐車/i, 'transport'],
+  [/保険|生命|共済|損保/, 'insurance'],
+  [/病院|クリニック|医院|歯科|薬局|調剤/, 'medical'],
+  [/居酒屋|会食|飲み会|バー/, 'social'],
+  [/映画|ゲーム|steam|playstation|nintendo|カラオケ|ライブ|チケット|ディズニー/i, 'fun'],
+  [/書店|ブック|学校|スクール|udemy|講座|塾/i, 'edu'],
+  [/カード|クレジ|JCB|VISA|マスター|ニコス|セゾン|エポス|オリコ|アプラス|ＵＣ/i, 'card'],
+];
+const CARD_PAYMENT_RE = /カード|クレジ|JCB|VISA|マスター|ニコス|セゾン|エポス|オリコ|アプラス|ＵＣ/i;
+
+/** 内容からカテゴリを推定：同じ内容の過去の記録 → キーワード → 既定の順 */
+function guessCategory(type, memo, history) {
+  if (history.has(`${type}:${memo}`)) return history.get(`${type}:${memo}`);
+  if (type === 'income') {
+    if (/給与|給料|キユウヨ|キュウヨ/.test(memo)) return 'salary';
+    if (/賞与|ボーナス|ショウヨ/.test(memo)) return 'bonus';
+    return 'other_in';
+  }
+  const hit = [...IMPORT_RULES, ...RECEIPT_CATEGORY].find(([re]) => re.test(memo));
+  return hit ? hit[1] : 'other';
+}
+
+/** 取り込み画面の状態から、取り込み候補の一覧を作る */
+function importItems(imp) {
+  const { rows, hi, cols, mode, walletId } = imp;
+  const history = new Map();
+  for (const t of S.txs) if (t.memo && t.category) history.set(`${t.type}:${t.memo}`, t.category);
+  // すでにある記録との重複（同じ日・金額・種類。内容が同じか、どちらかが空）。同じ行が複数ある時は1件ずつ対応させる
+  const pool = S.txs.filter((t) => t.walletId === walletId && t.type !== 'transfer').map((t) => ({ ...t, used: false }));
+  const out = [];
+  for (let i = hi + 1; i < rows.length; i++) {
+    const r = rows[i];
+    const date = cols.date >= 0 ? parseAnyDate(r[cols.date]) : '';
+    if (!date) continue;
+    const memo = String(cols.desc >= 0 ? r[cols.desc] || '' : '').normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 40);
+    let type, amount;
+    if (cols.out >= 0 && cols.in >= 0) {
+      const o = parseAmountCell(r[cols.out]);
+      const n = parseAmountCell(r[cols.in]);
+      if (o) { type = 'expense'; amount = Math.abs(o); } else if (n) { type = 'income'; amount = Math.abs(n); } else continue;
+    } else {
+      const a = cols.amount >= 0 ? parseAmountCell(r[cols.amount]) : null;
+      if (!a) continue;
+      type = (mode === 'expensePositive' ? a > 0 : a < 0) ? 'expense' : 'income';
+      amount = Math.abs(a);
+    }
+    const hit = pool.find((t) => !t.used && t.date === date && t.type === type && t.amount === amount && (!t.memo || !memo || t.memo === memo));
+    if (hit) hit.used = true;
+    const cardPay = type === 'expense' && !isCard(walletOf(walletId)) && CARD_PAYMENT_RE.test(memo);
+    out.push({ idx: i, date, memo, type, amount, category: guessCategory(type, memo, history), dup: !!hit, cardPay });
+  }
+  return out;
+}
+
+let imp = null;
+function pickStatement() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.csv,.tsv,.txt,text/csv';
+  input.onchange = async () => {
+    const f = input.files[0];
+    if (!f) return;
+    try { openImport(f.name, decodeText(await f.arrayBuffer())); } catch (e) { toast('ファイルを読み込めませんでした'); }
+  };
+  input.click();
+}
+
+function openImport(name, text) {
+  const rows = parseCsv(text);
+  if (rows.length < 2) { toast('取り込める行がありません'); return; }
+  const hi = findHeader(rows);
+  const headers = hi >= 0 ? rows[hi] : rows[0].map((_, i) => `${i + 1}列目`);
+  const cols = hi >= 0 ? guessColumns(headers) : guessByData(rows);
+  const cards = S.wallets.filter(isCard);
+  const looksCard = headers.some((h) => /利用/.test(h));
+  const wallet = (looksCard && cards[0]) || S.wallets.find((w) => !isCard(w) && w.id !== 'cash') || S.wallets[0];
+  imp = { name, rows, hi, headers, cols, walletId: wallet.id, mode: 'expensePositive', touched: new Map() };
+  imp.mode = defaultMode(imp);
+  showImport();
+}
+function defaultMode(x) {
+  if (isCard(walletOf(x.walletId))) return 'expensePositive';
+  const neg = x.rows.slice(x.hi + 1).some((r) => (parseAmountCell(r[x.cols.amount]) || 0) < 0);
+  return neg ? 'expenseNegative' : 'expensePositive';
+}
+
+function showImport() {
+  const x = imp;
+  const items = importItems(x);
+  const on = (it) => (x.touched.has(it.idx) ? x.touched.get(it.idx) : !(it.dup || it.cardPay));
+  const picked = items.filter(on);
+  const split = x.cols.out >= 0 && x.cols.in >= 0;
+  const colSel = (key, label) => `<div class="field"><label>${label}</label><select class="input" data-imp-col="${key}"><option value="-1">なし</option>${x.headers.map((h, i) => `<option value="${i}" ${x.cols[key] === i ? 'selected' : ''}>${esc(h || `${i + 1}列目`)}</option>`).join('')}</select></div>`;
+  const fail = x.cols.date < 0 || (x.cols.amount < 0 && !split);
+  const shown = items.slice(0, 80);
+  openSheet(`
+    <div class="form">
+      <h3>明細を取り込む</h3>
+      <div class="muted" style="font-size:12px">${esc(x.name)}</div>
+      <div class="field"><label>取り込み先</label><select class="input" data-imp-wallet>${S.wallets.map((w) => `<option value="${w.id}" ${w.id === x.walletId ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select></div>
+      ${split ? '' : `<div class="field"><label>金額の見方</label><select class="input" data-imp-mode>
+        <option value="expensePositive" ${x.mode === 'expensePositive' ? 'selected' : ''}>プラスの数字が支出（カード明細など）</option>
+        <option value="expenseNegative" ${x.mode === 'expenseNegative' ? 'selected' : ''}>マイナスの数字が支出（入出金が1列の銀行など）</option></select></div>`}
+      <details class="map" ${fail ? 'open' : ''}><summary>列の対応${fail ? '（日付と金額の列を選んでください）' : ''}</summary>
+        <div class="grid2" style="margin-top:8px">${colSel('date', '日付')}${colSel('desc', '内容')}${colSel('amount', '金額')}${colSel('out', '出金')}${colSel('in', '入金')}</div>
+      </details>
+      <div class="imp-head"><span class="num">${picked.length}件を取り込み${items.length > picked.length ? `（${items.length - picked.length}件は除外）` : ''}</span>
+        <span><button type="button" class="link" data-imp-all="1">すべて選択</button><button type="button" class="link" data-imp-all="0">すべて解除</button></span></div>
+      <div class="imp-list">${items.length ? shown.map((it) => `<label class="imp-row ${on(it) ? '' : 'off'}">
+          <input type="checkbox" data-imp-row="${it.idx}" ${on(it) ? 'checked' : ''}>
+          <span class="imp-date num">${+it.date.slice(5, 7)}/${+it.date.slice(8)}</span>
+          <span class="imp-memo">${esc(it.memo || '(内容なし)')}<small>${it.dup ? '取り込み済みの可能性' : it.cardPay ? 'カード引き落とし（重複に注意）' : esc(catOf(it.type, it.category).name)}</small></span>
+          <span class="imp-amt num ${it.type === 'income' ? 'income' : 'expense'}">${it.type === 'income' ? '+' : '−'}${yen(it.amount)}</span></label>`).join('')
+          + (items.length > shown.length ? `<div class="empty">ほか${items.length - shown.length}件</div>` : '')
+        : '<div class="empty">取り込める行がありません。列の対応を確認してください</div>'}</div>
+      <button class="btn block" data-imp-go ${picked.length ? '' : 'disabled'}>${picked.length}件を取り込む</button>
+    </div>`, (root) => {
+    const again = () => { x.touched = new Map(); showImport(); };
+    $('[data-imp-wallet]', root).onchange = (e) => { x.walletId = e.target.value; x.mode = defaultMode(x); again(); };
+    $('[data-imp-mode]', root)?.addEventListener('change', (e) => { x.mode = e.target.value; again(); });
+    $$('[data-imp-col]', root).forEach((sel) => sel.addEventListener('change', () => { x.cols[sel.dataset.impCol] = Number(sel.value); x.mode = defaultMode(x); again(); }));
+    $$('[data-imp-row]', root).forEach((c) => c.addEventListener('change', () => {
+      x.touched.set(Number(c.dataset.impRow), c.checked);
+      const keep = $('.sheet-panel').scrollTop; showImport(); $('.sheet-panel').scrollTop = keep;
+    }));
+    $$('[data-imp-all]', root).forEach((b) => b.addEventListener('click', () => {
+      items.forEach((it) => x.touched.set(it.idx, b.dataset.impAll === '1'));
+      showImport();
+    }));
+    $('[data-imp-go]', root).onclick = () => {
+      const made = picked.map((it) => ({
+        id: uid(), type: it.type, amount: it.amount, date: it.date, category: it.category, walletId: x.walletId, memo: it.memo,
+      }));
+      S.txs.push(...made);
+      save(); closeSheet(); render();
+      const ids = new Set(made.map((t) => t.id));
+      toast(`${made.length}件を取り込みました`, '取り消し', () => { S.txs = S.txs.filter((t) => !ids.has(t.id)); save(); render(); });
+    };
+  });
+}
+
 /* ---------- backup ---------- */
 function download(name, text, type) {
   const url = URL.createObjectURL(new Blob([text], { type }));
@@ -1226,6 +1474,7 @@ document.addEventListener('click', (e) => {
     case 'budget': return budgetSheet();
     case 'ics': return exportIcs();
     case 'csv': return exportCsv();
+    case 'import-csv': return pickStatement();
     case 'sync-in': UI.forceLogin = true; return render();
     case 'sync-out': return logout();
     case 'export': return download(`osaifu-backup-${todayStr()}.json`, JSON.stringify(S, null, 2), 'application/json');

@@ -359,3 +359,18 @@ button { cursor: pointer; }
 .muted-link { color: var(--muted); }
 .login .link { justify-self: center; }
 .btn:disabled { opacity: .55; }
+
+/* ---------- 明細の取り込み ---------- */
+details.map { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--surface); }
+details.map summary { font-size: 13px; color: var(--muted); cursor: pointer; }
+.imp-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 700; }
+.imp-head .link { padding: 4px 6px; }
+.imp-list { display: grid; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; }
+.imp-row { display: grid; grid-template-columns: auto 40px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.imp-row:first-child { border-top: 0; }
+.imp-row input { width: 18px; height: 18px; accent-color: var(--primary); }
+.imp-row.off { opacity: .55; }
+.imp-date { color: var(--muted); font-size: 12px; }
+.imp-memo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.imp-memo small { display: block; font-size: 11px; color: var(--muted); }
+.imp-amt { font-weight: 700; white-space: nowrap; }
