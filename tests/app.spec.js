@@ -170,3 +170,173 @@ test('タブバーはスクロールしても画面下に固定される', async
   expect(Math.round(before.y + before.height)).toBe(vh);
   expect(after.y).toBe(before.y);
 });
+
+test('レシートの文字から合計・日付・店名・カテゴリを推定する', async ({ page }) => {
+  const cases = [
+    {
+      text: 'イオン 新宿店\nTEL 03-1234-5678\n2026年9月27日(日) 18:32\n牛乳 ¥198\nパン ¥248\n小計 ¥446\n消費税 ¥35\n合計 ¥481\nお預り ¥1,000\nお釣り ¥519',
+      want: { amount: 481, date: '2026-09-27', store: 'イオン新宿店', category: 'food' },
+    },
+    {
+      // 全角・桁区切りのゆれ、合計の金額が次の行
+      text: 'マツモトキヨシ\n領収書\n2026/09/05\n合 計\n￥２，９８０\nお預り ￥３，０００',
+      want: { amount: 2980, date: '2026-09-05', store: 'マツモトキヨシ', category: 'daily' },
+    },
+    {
+      text: '中央クリニック\n令和8年9月1日\n診療費 1.500円\nお支払金額 1.500円',
+      want: { amount: 1500, date: '2026-09-01', store: '中央クリニック', category: 'medical' },
+    },
+    {
+      // 合計行が読めない場合は円表記の最大額
+      text: 'カフェ ABC\n2026.9.3\nコーヒー 450円\nケーキ 520円\n970円',
+      want: { amount: 970, date: '2026-09-03', store: 'カフェ ABC', category: 'food' },
+    },
+    {
+      // 実際の文字認識結果（文字間の空白、¥が「\」、桁区切りが「.」）
+      text: 'イオ ン 新宿 店\n2026 年 9 月 27 日 18:32\n牛乳 \\198\n\n小計 \\446\n\n合計 \\481\n\nお 預り \\1.000\n',
+      want: { amount: 481, date: '2026-09-27', store: 'イオン新宿店', category: 'food' },
+    },
+    { text: 'ぼやけて読めない', want: { amount: 0, date: '' } },
+  ];
+  for (const c of cases) {
+    const got = await page.evaluate((t) => parseReceipt(t), c.text);
+    expect(got, c.text.split('\n')[0]).toMatchObject(c.want);
+  }
+});
+
+test('支出の新規記録にだけ読み取りボタンが出る', async ({ page }) => {
+  await seed(page, base);
+  await page.click('#fab');
+  await expect(page.locator('[data-ocr]')).toBeVisible();
+  await page.click('.seg.type button[data-v=income]');
+  await expect(page.locator('[data-ocr]')).toHaveCount(0);
+});
+
+test('同期：3方向マージは片方の変更を採用し、両方変更なら端末側を優先する', async ({ page }) => {
+  const r = await page.evaluate(() => {
+    const rec = (amount) => ({ kind: 'tx', data: { id: 'x', amount } });
+    const c = Sync.canon;
+    const base = { a: c(rec(1)), b: c(rec(1)), d: c(rec(1)), e: c(rec(1)), f: c(rec(1)) };
+    const local = { a: rec(2), b: rec(1), d: rec(1), e: rec(5), n: rec(9) /* f は端末で削除 */ };
+    const remote = { a: rec(1), b: rec(3), e: rec(6), f: rec(1), m: rec(8) /* d はクラウドで削除 */ };
+    const m = Sync.merge(local, base, remote);
+    return { amounts: Object.fromEntries(Object.entries(m.recs).map(([k, v]) => [k, v.data.amount])), push: m.push.sort(), del: m.del.sort() };
+  });
+  expect(r.amounts).toEqual({ a: 2, b: 3, e: 5, n: 9, m: 8 });
+  expect(r.push).toEqual(['a', 'e', 'n']);
+  expect(r.del).toEqual(['f']);
+});
+
+test.describe('クラウド同期（Firebaseを代替して検証）', () => {
+  test.beforeEach(async ({ page }) => {
+    const fake = fs.readFileSync(new URL('./fake-firebase.js', import.meta.url), 'utf8');
+    await page.route('https://www.gstatic.com/firebasejs/**', (route) => route.fulfill({ body: fake, contentType: 'text/javascript', headers: { 'access-control-allow-origin': '*' } }));
+    await page.route('**/config.js', (route) => route.fulfill({ body: "window.OSAIFU_FIREBASE = { apiKey: 'test', projectId: 'test' };", contentType: 'text/javascript' }));
+    // クラウドには別端末で記録した支出が1件ある
+    await page.addInitScript(() => {
+      globalThis.__fake = { docs: new Map([['t_remote1', { kind: 'tx', data: { id: 'remote1', type: 'expense', amount: 777, date: '2026-09-15', category: 'food', walletId: 'cash', memo: '別端末' } }]]), listeners: [], authCbs: [], writes: [], user: null };
+    });
+  });
+
+  test('ログインで双方の記録がそろい、以後の変更が往復する', async ({ page }) => {
+    await seed(page, { ...base, txs: [{ id: 'local1', type: 'expense', amount: 500, date: '2026-09-20', category: 'fun', walletId: 'cash', memo: 'この端末' }] });
+    await page.click('[data-tab=wallet]');
+    await page.getByText('Googleでログイン').click();
+    await expect(page.locator('.set-row', { hasText: 'クラウド同期' })).toContainText('同期済み');
+    await expect(page.locator('.set-row', { hasText: 'クラウド同期' })).toContainText('test@example.com');
+
+    // クラウド → 端末
+    let s = await state(page);
+    expect(s.txs.map((t) => t.id).sort()).toEqual(['local1', 'remote1']);
+    // 端末 → クラウド（財布・設定・端末の記録）
+    const remoteIds = await page.evaluate(() => [...__fake.docs.keys()].sort());
+    expect(remoteIds).toEqual(['_settings', 't_local1', 't_remote1', 'w_bank', 'w_cash']);
+
+    // 別端末でクラウドの記録が変更された
+    await page.evaluate(() => {
+      const d = __fake.docs.get('t_remote1'); d.data.amount = 800; __fake.docs.set('t_remote1', d); __fake.emit();
+    });
+    await page.click('[data-tab=list]');
+    await expect(page.locator('[data-edit-tx=remote1]')).toContainText('¥800');
+
+    // 端末で削除 → クラウドからも消える
+    page.once('dialog', (d) => d.accept());
+    await page.click('[data-edit-tx=local1]');
+    await page.click('#txForm [data-del]');
+    await expect.poll(() => page.evaluate(() => __fake.docs.has('t_local1'))).toBe(false);
+
+    // ログアウトしても端末のデータは残る
+    await page.click('[data-tab=wallet]');
+    await page.getByText('ログアウト').click();
+    await expect(page.getByText('Googleでログイン')).toBeVisible();
+    s = await state(page);
+    expect(s.txs.map((t) => t.id)).toEqual(['remote1']);
+  });
+});
+
+test('Firebase未設定なら同期の項目は出ずSDKも読み込まない', async ({ page }) => {
+  const sdk = [];
+  page.on('request', (r) => { if (r.url().includes('firebasejs')) sdk.push(r.url()); });
+  await page.click('[data-tab=wallet]');
+  await expect(page.getByText('クラウド同期')).toHaveCount(0);
+  expect(sdk).toEqual([]);
+});
+
+test('金額が変わる支払いは記録画面で金額を確定し、次回の目安に反映される', async ({ page }) => {
+  await seed(page, { ...base, bills: [{ id: 'elec', name: '電気代', amount: 8000, day: 30, category: 'utility', walletId: 'bank', notifyDays: 1, variable: true }] });
+  const row = page.locator('.row-item', { hasText: '電気代' }).first();
+  await expect(row).toContainText('約¥8,000');
+  await row.locator('[data-pay]').click();
+  await expect(page.locator('#txForm input[name=amount]')).toHaveValue('8,000');
+  await page.fill('#txForm input[name=amount]', '9100');
+  await page.click('#txForm button[type=submit]');
+  await expect(row.locator('[data-pay]')).toHaveText('済');
+  await expect(row).toContainText('¥9,100');
+  const s = await state(page);
+  expect(s.txs[0]).toMatchObject({ amount: 9100, billId: 'elec', billMonth: '2026-09', type: 'expense' });
+  expect(s.bills[0].amount).toBe(9100);
+});
+
+test('毎月の収入を登録して受け取りを記録できる', async ({ page }) => {
+  await seed(page, base);
+  await page.getByText('＋ 支払いを登録').click();
+  await page.click('#billForm .seg.type button[data-v=income]');
+  await page.fill('#billForm input[name=name]', '給与');
+  await page.fill('#billForm input[name=amount]', '280000');
+  await page.selectOption('#billForm select[name=day]', '25');
+  await page.click('#billForm button[type=submit]');
+
+  const row = page.locator('.row-item', { hasText: '給与' }).first();
+  await expect(row).toContainText('未入金');
+  await row.getByText('受取').click();
+  await expect(page.locator('.summary .income')).toHaveText('¥280,000');
+  const s = await state(page);
+  expect(s.bills[0]).toMatchObject({ type: 'income', category: 'salary' });
+  expect(s.txs[0]).toMatchObject({ type: 'income', amount: 280000, category: 'salary', billId: s.bills[0].id });
+  // 収入は「残り」の支払額に含めない
+  await expect(page.locator('.card-head', { hasText: '支払い' })).not.toContainText('残り');
+});
+
+test('財布の現在の残高を入力すると、その金額に合わせられる', async ({ page }) => {
+  await seed(page, { ...base, txs: [{ id: '1', type: 'expense', amount: 1500, date: '2026-09-10', category: 'food', walletId: 'cash', memo: '' }] });
+  await page.click('[data-tab=wallet]');
+  await page.click('[data-edit-wallet=cash]');
+  await expect(page.locator('#wForm input[name=balance]')).toHaveValue('8500');
+  await page.fill('#wForm input[name=balance]', '9000');
+  await page.click('#wForm button[type=submit]');
+  await expect(page.locator('[data-edit-wallet=cash]')).toContainText('¥9,000');
+  expect((await state(page)).wallets.find((w) => w.id === 'cash').initial).toBe(10500);
+});
+
+test('支出の推移は6か月分を表示し、棒をタップするとその月へ移る', async ({ page }) => {
+  await seed(page, { ...base, txs: [
+    { id: '1', type: 'expense', amount: 3000, date: '2026-07-10', category: 'food', walletId: 'cash', memo: '' },
+    { id: '2', type: 'expense', amount: 1200, date: '2026-09-10', category: 'food', walletId: 'cash', memo: '' },
+  ] });
+  await page.click('[data-tab=list]');
+  await expect(page.locator('.trend-col')).toHaveCount(6);
+  await expect(page.locator('.trend-col.cur')).toContainText('¥1,200');
+  await page.click('[data-month="2026-6"]');
+  await expect(page.locator('#title')).toHaveText('2026年7月');
+  await expect(page.locator('.trend-col.cur')).toContainText('¥3,000');
+});

@@ -78,8 +78,12 @@ function load() {
   return seed();
 }
 let S = load();
-function save() {
+function saveLocal() {
   try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('保存に失敗しました'); }
+}
+function save() {
+  saveLocal();
+  Sync.push();
 }
 
 const now = new Date();
@@ -124,6 +128,7 @@ function dueDate(bill, y, m) {
   return new Date(y, m, Math.min(bill.day, last));
 }
 const paidTx = (bill, y, m) => S.txs.find((t) => t.billId === bill.id && t.billMonth === ym(y, m));
+const billType = (b) => (b.type === 'income' ? 'income' : 'expense');
 
 /** 指定月の定期支払い一覧（期日順） */
 function monthBills(y, m) {
@@ -145,6 +150,7 @@ function monthBills(y, m) {
 
 function dueLabel(it) {
   if (it.status === 'paid') return '';
+  if (it.diff < 0 && billType(it.bill) === 'income') return '<span class="badge warn">未入金</span>';
   if (it.diff < 0) return `<span class="badge danger">${-it.diff}日超過</span>`;
   if (it.diff === 0) return '<span class="badge danger">今日</span>';
   if (it.diff === 1) return '<span class="badge warn">明日</span>';
@@ -166,12 +172,14 @@ function togglePaid(billId, y, m) {
   const today = new Date();
   const date = today < due && today.getFullYear() === y && today.getMonth() === m ? todayStr() : ymd(due);
   const t = {
-    id: uid(), type: 'expense', amount: bill.amount, date, category: bill.category,
+    id: uid(), type: billType(bill), amount: bill.amount, date, category: bill.category,
     walletId: bill.walletId, memo: bill.name, billId: bill.id, billMonth: ym(y, m),
   };
+  // 金額が毎月変わるものは、前回の金額を入れた記録画面で確定する
+  if (bill.variable) { txSheet(null, t); return; }
   S.txs.push(t);
   save(); render();
-  toast(`${bill.name} ${yen(bill.amount)} を支払済にしました`, '取り消し', () => {
+  toast(`${bill.name} ${yen(bill.amount)} を${t.type === 'income' ? '受取済' : '支払済'}にしました`, '取り消し', () => {
     S.txs = S.txs.filter((x) => x.id !== t.id); save(); render();
   });
 }
@@ -189,12 +197,15 @@ function render() {
 }
 
 function billRow(it) {
+  const type = billType(it.bill);
+  // 支払済は実際の金額、未払いで金額が変わるものは目安として表示
+  const amount = it.tx ? it.tx.amount : it.bill.amount;
   return `
   <div class="row-item">
-    ${mark(catOf('expense', it.bill.category))}
+    ${mark(catOf(type, it.bill.category))}
     <div class="row-main" data-edit-bill="${it.bill.id}"><div class="t"><span>${esc(it.bill.name)}</span>${dueLabel(it)}</div></div>
-    <div class="amt num">${yen(it.bill.amount)}</div>
-    <button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${it.bill.id}">${it.tx ? '済' : '支払う'}</button>
+    <div class="amt num ${type === 'income' ? 'income' : ''}">${!it.tx && it.bill.variable ? '<small class="muted">約</small>' : ''}${yen(amount)}</div>
+    <button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${it.bill.id}">${it.tx ? '済' : type === 'income' ? '受取' : '支払う'}</button>
   </div>`;
 }
 
@@ -218,7 +229,7 @@ function homeView() {
   const budget = Number(S.settings.budget) || 0;
   const bills = monthBills(y, m);
   const unpaid = bills.filter((b) => !b.tx);
-  const unpaidSum = unpaid.reduce((s, b) => s + b.bill.amount, 0);
+  const unpaidSum = unpaid.filter((b) => billType(b.bill) === 'expense').reduce((s, b) => s + b.bill.amount, 0);
   const shown = (unpaid.length ? unpaid : bills).slice(0, 3);
   const totalBal = S.wallets.reduce((s, w) => s + balance(w.id), 0);
 
@@ -249,7 +260,7 @@ function homeView() {
   <section class="card">
     <div class="card-head">
       <h2>支払い</h2>
-      ${unpaid.length ? `<span class="head-val num">残り ${yen(unpaidSum)}</span>` : bills.length ? '<span class="head-val">完了</span>' : ''}
+      ${unpaidSum ? `<span class="head-val num">残り ${yen(unpaidSum)}</span>` : bills.length && !unpaid.length ? '<span class="head-val">完了</span>' : ''}
     </div>
     ${bills.length ? `<div class="rows">${shown.map(billRow).join('')}</div>
       ${bills.length > shown.length ? `<button class="link more" data-goto="cal">ほか${bills.length - shown.length}件</button>` : ''}`
@@ -298,7 +309,7 @@ function calView() {
     const bd = billsByDay[ds] || [];
     cells += `<button class="cal-day ${wd === 0 ? 'sun' : wd === 6 ? 'sat' : ''} ${ds === today ? 'today' : ''} ${ds === UI.sel ? 'sel' : ''}" data-day="${ds}">
       <span class="d">${d}</span>
-      ${bd.length ? `<span class="dots">${bd.map((b) => `<i class="${b.status === 'paid' ? 'paid' : b.status === 'late' ? 'late' : ''}"></i>`).join('')}</span>` : ''}
+      ${bd.length ? `<span class="dots">${bd.map((b) => `<i class="${b.status === 'paid' ? 'paid' : billType(b.bill) === 'income' ? 'in' : b.status === 'late' ? 'late' : ''}"></i>`).join('')}</span>` : ''}
       ${pd?.in ? `<span class="in num">+${compact(pd.in)}</span>` : ''}
       ${pd?.ex ? `<span class="ex num">-${compact(pd.ex)}</span>` : ''}
     </button>`;
@@ -314,7 +325,7 @@ function calView() {
       ${WD.map((w, i) => `<div class="cal-wd ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</div>`).join('')}
       ${cells}
     </div>
-    <div class="cal-legend"><span><i></i>予定</span><span><i class="late"></i>超過</span><span><i class="paid"></i>済</span></div>
+    <div class="cal-legend"><span><i></i>支払い</span><span><i class="in"></i>収入</span><span><i class="late"></i>超過</span><span><i class="paid"></i>済</span></div>
   </section>
 
   <section class="card">
@@ -326,8 +337,28 @@ function calView() {
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>毎月の支払い</h2><button class="link" data-act="new-bill">＋ 追加</button></div>
+    <div class="card-head"><h2>毎月の予定</h2><button class="link" data-act="new-bill">＋ 追加</button></div>
     ${bills.length ? `<div class="rows">${bills.map(billRow).join('')}</div>` : '<div class="empty">なし</div>'}
+  </section>`;
+}
+
+/** 表示中の月までの6か月の支出（棒をタップでその月へ） */
+function trendCard() {
+  const months = Array.from({ length: 6 }, (_, i) => new Date(UI.y, UI.m - 5 + i, 1));
+  const vals = months.map((d) => totals(d.getFullYear(), d.getMonth()).expense);
+  const max = Math.max(...vals);
+  if (!max) return '';
+  return `<section class="card trend" aria-label="支出の推移">
+    <div class="card-head"><h2>支出の推移</h2></div>
+    <div class="trend-bars">${months.map((d, i) => {
+      const cur = i === 5;
+      const label = `${d.getMonth() + 1}月`;
+      return `<button class="trend-col ${cur ? 'cur' : ''}" data-month="${d.getFullYear()}-${d.getMonth()}" aria-label="${label} ${yen(vals[i])}" data-tip="${yen(vals[i])}">
+        ${cur ? `<span class="trend-val num">${yen(vals[i])}</span>` : ''}
+        <span class="trend-bar" style="height:${vals[i] ? Math.max(3, (vals[i] / max) * 100) : 0}%"></span>
+        <span class="trend-m">${label}</span>
+      </button>`;
+    }).join('')}</div>
   </section>`;
 }
 
@@ -341,6 +372,7 @@ function listView() {
   for (const t of txs) (groups[t.date] ||= []).push(t);
 
   return `
+  ${trendCard()}
   <div class="seg" data-filter>
     ${[['all', 'すべて'], ['expense', '支出'], ['income', '収入'], ['transfer', '振替']].map(([v, l]) => `<button data-v="${v}" class="${f === v ? 'on' : ''}">${l}</button>`).join('')}
   </div>
@@ -350,6 +382,16 @@ function listView() {
     return `<div class="day-head"><span>${dt.getMonth() + 1}/${dt.getDate()}(${WD[dt.getDay()]})</span><span class="num">${net ? signed(net) : ''}</span></div>
       <section class="card" style="padding:2px 16px"><div class="rows">${list.map(txRow).join('')}</div></section>`;
   }).join('') : '<section class="card"><div class="empty">記録なし</div></section>'}`;
+}
+
+const SYNC_LABEL = { syncing: '同期中', synced: '同期済み', offline: 'オフライン', error: '同期エラー' };
+function syncRow() {
+  if (!Sync.enabled) return '';
+  const on = Sync.status !== 'signedOut';
+  return `<div class="set-row">
+      <div class="row-main"><div class="t">クラウド同期</div>${on ? `<div class="s">${esc(Sync.email)} ${SYNC_LABEL[Sync.status] || ''}</div>` : ''}</div>
+      ${on ? '<button class="btn ghost sm" data-act="sync-out">ログアウト</button>' : '<button class="btn sm" data-act="sync-in">Googleでログイン</button>'}
+    </div>`;
 }
 
 function walletView() {
@@ -371,6 +413,7 @@ function walletView() {
 
   <section class="card">
     <div class="card-head"><h2>設定</h2></div>
+    ${syncRow()}
     <div class="set-row">
       <div class="row-main"><div class="t">通知</div>${note ? `<div class="s">${note}</div>` : ''}</div>
       <label class="switch"><input type="checkbox" id="notifyToggle" ${S.settings.notify && perm === 'granted' ? 'checked' : ''} ${note ? 'disabled' : ''}><span></span></label>
@@ -432,6 +475,7 @@ function txSheet(tx, preset = {}) {
       <h3>${tx ? '記録を編集' : '記録する'}</h3>
       <div class="seg type">${[['expense', '支出'], ['income', '収入'], ['transfer', '振替']].map(([v, l]) => `<button type="button" data-v="${v}" class="${type === v ? 'on' : ''}">${l}</button>`).join('')}</div>
       <div class="amount-wrap"><span>¥</span><input class="amount-input num" name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${t.amount ? Number(t.amount).toLocaleString('ja-JP') : ''}" required></div>
+      ${type === 'expense' && !tx ? '<button type="button" class="btn ghost sm block" data-ocr>レシートを読み取る</button><input type="file" accept="image/*" data-ocr-file hidden>' : ''}
       ${type === 'transfer' ? `
         <div class="grid2">
           <div class="field"><label>出金元</label><select class="input" name="walletId">${walletOptions(t.walletId)}</select></div>
@@ -466,9 +510,12 @@ function txSheet(tx, preset = {}) {
       const v = readForm(f);
       if (!v.amount) { amt.focus(); toast('金額を入力してください'); return; }
       if (type === 'transfer' && v.walletId === v.toWalletId) { toast('出金元と入金先が同じです'); return; }
-      const rec = { ...(tx || { id: uid() }), type, ...v };
+      const link = preset.billId ? { billId: preset.billId, billMonth: preset.billMonth } : {};
+      const rec = { ...(tx || { id: uid(), ...link }), type, ...v };
       if (type !== 'transfer') delete rec.toWalletId; else delete rec.category;
       if (tx) Object.assign(tx, rec); else S.txs.push(rec);
+      const bill = rec.billId && S.bills.find((b) => b.id === rec.billId);
+      if (bill?.variable && !tx) bill.amount = rec.amount;
       save(); closeSheet(); render();
       toast(tx ? '更新しました' : `${type === 'income' ? '収入' : type === 'expense' ? '支出' : '振替'} ${yen(rec.amount)} を記録しました`);
     });
@@ -476,6 +523,30 @@ function txSheet(tx, preset = {}) {
       if (!confirm('この記録を削除しますか？')) return;
       S.txs = S.txs.filter((x) => x.id !== tx.id);
       save(); closeSheet(); render(); toast('削除しました');
+    });
+    const ocrBtn = $('[data-ocr]', root);
+    const ocrFile = $('[data-ocr-file]', root);
+    ocrBtn?.addEventListener('click', () => ocrFile.click());
+    ocrFile?.addEventListener('change', async () => {
+      const file = ocrFile.files[0];
+      if (!file) return;
+      ocrBtn.disabled = true;
+      ocrBtn.textContent = '読み取り中…';
+      try {
+        const r = await readReceipt(file, (p) => { ocrBtn.textContent = `読み取り中… ${Math.round(p * 100)}%`; });
+        if (!f.isConnected) return;
+        if (r.amount) amt.value = r.amount.toLocaleString('ja-JP');
+        if (r.date) f.date.value = r.date;
+        if (r.store && !f.memo.value) f.memo.value = r.store;
+        if (r.category) { const c = $(`input[name=category][value="${r.category}"]`, f); if (c) c.checked = true; }
+        toast(r.amount ? '読み取りました。内容を確認してください' : '合計金額を読み取れませんでした');
+      } catch (e) {
+        toast('読み取りに失敗しました（通信環境を確認してください）');
+      } finally {
+        ocrBtn.disabled = false;
+        ocrBtn.textContent = 'レシートを読み取る';
+        ocrFile.value = '';
+      }
     });
     if (!tx) setTimeout(() => amt.focus(), 250);
   };
@@ -490,30 +561,44 @@ function readForm(f) {
 }
 
 function billSheet(bill) {
-  const b = bill || { name: '', amount: '', day: 27, category: 'house', walletId: S.wallets.find((w) => w.id === 'bank')?.id || S.wallets[0]?.id, notifyDays: 1 };
-  openSheet(`
+  const b = { name: '', amount: '', day: 27, category: 'house', walletId: S.wallets.find((w) => w.id === 'bank')?.id || S.wallets[0]?.id, notifyDays: 1, type: 'expense', variable: false, ...bill };
+  let type = billType(b);
+  const body = () => `
     <form class="form" id="billForm">
-      <h3>${bill ? '毎月の支払いを編集' : '毎月の支払いを登録'}</h3>
-      <div class="field"><label>名前</label><input class="input" name="name" value="${esc(b.name)}" placeholder="例：家賃、電気代、Netflix" required></div>
+      <h3>${bill ? '毎月の予定を編集' : '毎月の予定を登録'}</h3>
+      <div class="seg type">${[['expense', '支払い'], ['income', '収入']].map(([v, l]) => `<button type="button" data-v="${v}" class="${type === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="field"><label>名前</label><input class="input" name="name" value="${esc(b.name)}" placeholder="${type === 'income' ? '例：給与' : '例：家賃、電気代、Netflix'}" required></div>
       <div class="amount-wrap"><span>¥</span><input class="amount-input num" name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${b.amount ? Number(b.amount).toLocaleString('ja-JP') : ''}" required></div>
+      <label class="check"><input type="checkbox" name="variable" ${b.variable ? 'checked' : ''}> 毎月金額が変わる（記録時に入力）</label>
       <div class="grid2">
-        <div class="field"><label>毎月の支払日</label><select class="input" name="day">${Array.from({ length: 31 }, (_, i) => i + 1).map((d) => `<option value="${d}" ${d === b.day ? 'selected' : ''}>${d === 31 ? '月末' : d + '日'}</option>`).join('')}</select></div>
+        <div class="field"><label>毎月の${type === 'income' ? '入金日' : '支払日'}</label><select class="input" name="day">${Array.from({ length: 31 }, (_, i) => i + 1).map((d) => `<option value="${d}" ${d === b.day ? 'selected' : ''}>${d === 31 ? '月末' : d + '日'}</option>`).join('')}</select></div>
         <div class="field"><label>お知らせ</label><select class="input" name="notifyDays">${NOTIFY_OPTS.map(([v, l]) => `<option value="${v}" ${v === b.notifyDays ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       </div>
-      <div class="field"><span class="lbl">カテゴリ</span>${catGrid('expense', b.category)}</div>
-      <div class="field"><label>支払い元</label><select class="input" name="walletId">${walletOptions(b.walletId)}</select></div>
+      <div class="field"><span class="lbl">カテゴリ</span>${catGrid(type, CATS[type].some((c) => c.id === b.category) ? b.category : CATS[type][0].id)}</div>
+      <div class="field"><label>${type === 'income' ? '入金先' : '支払い元'}</label><select class="input" name="walletId">${walletOptions(b.walletId)}</select></div>
       <button class="btn block" type="submit">${bill ? '更新する' : '登録する'}</button>
-      ${bill ? '<button class="btn danger block" type="button" data-del>この支払いを削除</button>' : ''}
-    </form>`, (root) => {
+      ${bill ? '<button class="btn danger block" type="button" data-del>この予定を削除</button>' : ''}
+    </form>`;
+  const readBill = (f) => {
+    const fd = new FormData(f);
+    return {
+      name: String(fd.get('name')).trim(), amount: parseAmount(fd.get('amount')), day: Number(fd.get('day')),
+      notifyDays: Number(fd.get('notifyDays')), category: fd.get('category') || 'other', walletId: fd.get('walletId'),
+      type, variable: fd.get('variable') === 'on',
+    };
+  };
+  const mount = (root) => {
     const f = $('#billForm', root);
     f.amount.addEventListener('input', () => { const n = parseAmount(f.amount.value); f.amount.value = n ? n.toLocaleString('ja-JP') : ''; });
+    $$('.seg.type button', root).forEach((btn) => btn.addEventListener('click', () => {
+      Object.assign(b, readBill(f), { amount: parseAmount(f.amount.value) || '' });
+      type = btn.dataset.v;
+      if (!CATS[type].some((c) => c.id === b.category)) b.category = CATS[type][0].id;
+      root.innerHTML = body(); mount(root);
+    }));
     f.addEventListener('submit', (e) => {
       e.preventDefault();
-      const fd = new FormData(f);
-      const v = {
-        name: String(fd.get('name')).trim(), amount: parseAmount(fd.get('amount')), day: Number(fd.get('day')),
-        notifyDays: Number(fd.get('notifyDays')), category: fd.get('category') || 'other', walletId: fd.get('walletId'),
-      };
+      const v = readBill(f);
       if (!v.name || !v.amount) { toast('名前と金額を入力してください'); return; }
       if (bill) Object.assign(bill, v); else S.bills.push({ id: uid(), active: true, ...v });
       save(); closeSheet(); render();
@@ -523,13 +608,14 @@ function billSheet(bill) {
       }
     });
     $('[data-del]', root)?.addEventListener('click', () => {
-      if (!confirm(`「${bill.name}」を削除しますか？\n（過去の支払い記録は残ります）`)) return;
+      if (!confirm(`「${bill.name}」を削除しますか？\n（過去の記録は残ります）`)) return;
       S.bills = S.bills.filter((x) => x.id !== bill.id);
       S.txs.forEach((t) => { if (t.billId === bill.id) delete t.billId; });
       save(); closeSheet(); render(); toast('削除しました');
     });
     if (!bill) setTimeout(() => f.name.focus(), 250);
-  });
+  };
+  openSheet(body(), mount);
 }
 
 function walletSheet(w) {
@@ -538,8 +624,7 @@ function walletSheet(w) {
     <form class="form" id="wForm">
       <h3>${w ? '財布を編集' : '財布・口座を追加'}</h3>
       <div class="field"><label>名前</label><input class="input" name="name" value="${esc(x.name)}" placeholder="例：PayPay、楽天銀行" required></div>
-      <div class="field"><label>初期残高（現在の残高を入力）</label><input class="input num" name="initial" inputmode="numeric" value="${Number(x.initial) || ''}" placeholder="0"></div>
-      ${w ? `<div class="muted" style="font-size:12px">現在の残高：${yen(balance(w.id))}</div>` : ''}
+      <div class="field"><label>現在の残高</label><input class="input num" name="balance" inputmode="numeric" value="${w ? balance(w.id) : ''}" placeholder="0"></div>
       <button class="btn block" type="submit">${w ? '更新する' : '追加する'}</button>
       ${w ? '<button class="btn danger block" type="button" data-del>この財布を削除</button>' : ''}
     </form>`, (root) => {
@@ -547,8 +632,10 @@ function walletSheet(w) {
     f.addEventListener('submit', (e) => {
       e.preventDefault();
       const fd = new FormData(f);
-      const raw = String(fd.get('initial')).replace(/[^\d-]/g, '');
-      const v = { name: String(fd.get('name')).trim(), initial: Number(raw) || 0 };
+      const entered = Number(String(fd.get('balance')).replace(/[^\d-]/g, '')) || 0;
+      // 記録から計算した増減はそのままに、残高が入力値になるよう起点を合わせる
+      const moved = w ? balance(w.id) - (Number(w.initial) || 0) : 0;
+      const v = { name: String(fd.get('name')).trim(), initial: entered - moved };
       if (!v.name) return;
       if (w) Object.assign(w, v); else S.wallets.push({ id: uid(), ...v });
       save(); closeSheet(); render();
@@ -583,6 +670,92 @@ function budgetSheet() {
   });
 }
 
+/* ---------- receipt OCR ---------- */
+// 画像は端末内で文字認識し、外部には送らない（ライブラリと日本語データのみCDNから取得）
+const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+let tesseractLoading = null;
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  return (tesseractLoading ||= new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = TESSERACT_URL;
+    el.onload = () => resolve(window.Tesseract);
+    el.onerror = () => { tesseractLoading = null; el.remove(); reject(new Error('load failed')); };
+    document.head.appendChild(el);
+  }));
+}
+
+/** 認識を速くするため長辺1600pxに縮小 */
+async function shrinkImage(file, max = 1600) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bmp.width * scale);
+  canvas.height = Math.round(bmp.height * scale);
+  canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+async function readReceipt(file, onProgress) {
+  const T = await loadTesseract();
+  const img = await shrinkImage(file);
+  const { data } = await T.recognize(img, 'jpn', {
+    logger: (m) => { if (m.status === 'recognizing text') onProgress(m.progress); },
+  });
+  return parseReceipt(data.text);
+}
+
+const RECEIPT_CATEGORY = [
+  [/病院|クリニック|医院|歯科|調剤/, 'medical'],
+  [/ドラッグ|薬|マツモトキヨシ|ウエルシア|ツルハ|スギ|ダイソー|セリア|ニトリ|無印/, 'daily'],
+  [/JR|鉄道|タクシー|バス|駐車|ガソリン|ENEOS|出光|コスモ/i, 'transport'],
+  [/書店|ブック/, 'edu'],
+  [/ユニクロ|UNIQLO|GU|しまむら|ZARA/i, 'clothes'],
+  [/スーパー|マート|イオン|AEON|西友|ライフ|イトーヨーカドー|まいばすけっと|業務|ローソン|セブン|ファミリー|ミニストップ|コンビニ|食品|ベーカリー|パン|カフェ|珈琲|コーヒー|スターバックス|マクドナルド|吉野家|すき家|松屋|食堂|レストラン|弁当/i, 'food'],
+];
+
+/** レシートの文字認識結果から合計金額・日付・店名・カテゴリを推定する */
+function parseReceipt(text) {
+  // 文字認識は日本語の文字間に空白を入れるので詰める。「¥」は「\」と読まれることがある
+  const jp = '\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー';
+  const lines = String(text).normalize('NFKC').replace(/\\/g, '¥').split(/\r?\n/)
+    .map((l) => l.replace(/[ \t]+/g, ' ').replace(new RegExp(`(?<=[${jp}]) (?=[${jp}])`, 'gu'), '').trim())
+    .filter(Boolean);
+  // 「1,234」「1.234」「1 234」のような桁区切りをまとめる
+  const numbersIn = (l) => [...l.replace(/(\d)[,. ](?=\d{3}(?!\d))/g, '$1').matchAll(/\d+/g)].map((m) => Number(m[0]));
+  const plausible = (n) => n > 0 && n < 10000000;
+
+  let amount = 0;
+  const totalRe = /合\s*計|総\s*額|お?買\s*上|お?買い上げ|ご?請求|お?支払(?:金額|合計)?/;
+  const excludeRe = /小\s*計|預|釣|税|点数|内\s*訳|割引|値引|ポイント/;
+  for (let i = 0; i < lines.length && !amount; i++) {
+    if (!totalRe.test(lines[i]) || excludeRe.test(lines[i])) continue;
+    const here = numbersIn(lines[i]).filter(plausible);
+    const next = lines[i + 1] && !excludeRe.test(lines[i + 1]) ? numbersIn(lines[i + 1]).filter(plausible) : [];
+    amount = here.at(-1) || next.at(-1) || 0;
+  }
+  if (!amount) {
+    // 合計行が読めない時は「¥」「円」付きの最大額
+    const yenNums = lines.filter((l) => !excludeRe.test(l) && /¥|円/.test(l)).flatMap(numbersIn).filter(plausible);
+    amount = yenNums.length ? Math.max(...yenNums) : 0;
+  }
+
+  let date = '';
+  const joined = lines.join('\n');
+  const valid = (y, m, d) => m >= 1 && m <= 12 && d >= 1 && d <= 31 ? `${y}-${pad(m)}-${pad(d)}` : '';
+  const western = joined.match(/(20\d{2})\s*[年/.\-]\s*(\d{1,2})\s*[月/.\-]\s*(\d{1,2})/);
+  const reiwa = joined.match(/令和\s*(\d{1,2}|元)\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})/);
+  if (western) date = valid(+western[1], +western[2], +western[3]);
+  else if (reiwa) date = valid(2018 + (reiwa[1] === '元' ? 1 : +reiwa[1]), +reiwa[2], +reiwa[3]);
+
+  const store = lines.slice(0, 6).find((l) =>
+    (l.match(/[^\d\s\-:/.,¥]/g) || []).length >= 2 && !/領収|レシート|明細|TEL|電話|〒|登録番号|\d{2,4}-\d{2,4}-\d{3,4}|\d{4}[年/]/i.test(l),
+  )?.slice(0, 20) || '';
+  const category = RECEIPT_CATEGORY.find(([re]) => re.test(store))?.[1] || '';
+
+  return { amount, date, store, category };
+}
+
 /* ---------- notifications ---------- */
 async function enableNotify() {
   if (!('Notification' in window)) { toast('この端末は通知に未対応です'); return false; }
@@ -612,7 +785,7 @@ function checkDue(force = false) {
   const d = new Date();
   const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
   const items = [...monthBills(d.getFullYear(), d.getMonth()), ...monthBills(next.getFullYear(), next.getMonth())]
-    .filter((i) => !i.tx && (i.status === 'late' || i.status === 'soon'));
+    .filter((i) => !i.tx && billType(i.bill) === 'expense' && (i.status === 'late' || i.status === 'soon'));
   S.settings.lastNotified = today;
   save();
   if (!items.length) return;
@@ -641,7 +814,7 @@ function exportIcs() {
     lines.push(
       'BEGIN:VEVENT', `UID:${b.id}@osaifu`, `DTSTAMP:${stamp}`,
       `DTSTART;VALUE=DATE:${ds}`, `DTEND;VALUE=DATE:${de}`, rule,
-      `SUMMARY:${icsEsc(`${b.name} ${yen(b.amount)}`)}`,
+      `SUMMARY:${icsEsc(`${b.name} ${b.variable ? '約' : ''}${yen(b.amount)}${billType(b) === 'income' ? '（入金）' : ''}`)}`,
       `DESCRIPTION:${icsEsc(`支払い元：${walletOf(b.walletId)?.name || ''}`)}`,
       'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEsc(`${b.name}の支払い`)}`, `TRIGGER:${trigger}`, 'END:VALARM',
       'END:VEVENT',
@@ -730,7 +903,7 @@ view.addEventListener('touchend', (e) => {
 });
 
 document.addEventListener('click', (e) => {
-  const el = e.target.closest('[data-pay],[data-edit-bill],[data-edit-tx],[data-edit-wallet],[data-goto],[data-act],[data-day],[data-filter] button');
+  const el = e.target.closest('[data-pay],[data-edit-bill],[data-edit-tx],[data-edit-wallet],[data-goto],[data-act],[data-day],[data-month],[data-filter] button');
   if (!el) return;
   const ds = el.dataset;
   if (ds.pay) {
@@ -742,6 +915,7 @@ document.addEventListener('click', (e) => {
   if (ds.editWallet) return walletSheet(walletOf(ds.editWallet));
   if (ds.goto) { UI.tab = ds.goto; render(); view.scrollTop = 0; return; }
   if (ds.day) { UI.sel = ds.day; render(); return; }
+  if (ds.month) { const [y, m] = ds.month.split('-').map(Number); UI.y = y; UI.m = m; render(); return; }
   if (el.parentElement?.dataset.filter !== undefined && ds.v) { UI.filter = ds.v; render(); return; }
   switch (ds.act) {
     case 'new-bill': return billSheet(null);
@@ -751,10 +925,12 @@ document.addEventListener('click', (e) => {
     case 'budget': return budgetSheet();
     case 'ics': return exportIcs();
     case 'csv': return exportCsv();
+    case 'sync-in': return Sync.signIn();
+    case 'sync-out': return Sync.signOut();
     case 'export': return download(`osaifu-backup-${todayStr()}.json`, JSON.stringify(S, null, 2), 'application/json');
     case 'import': return importJson();
     case 'reset':
-      if (confirm('すべてのデータを削除します。元に戻せません。よろしいですか？')) { S = seed(); save(); render(); toast('削除しました'); }
+      if (confirm(`すべてのデータを削除します${Sync.status !== 'signedOut' && Sync.enabled ? '（クラウドの記録も削除されます）' : ''}。元に戻せません。よろしいですか？`)) { S = seed(); save(); render(); toast('削除しました'); }
       return;
   }
 });
