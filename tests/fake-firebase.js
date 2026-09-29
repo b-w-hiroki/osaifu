@@ -15,6 +15,23 @@ export const signInWithPopup = async () => {
 export const signInWithRedirect = signInWithPopup;
 export const signOut = async () => { F.user = null; F.authCbs.forEach((cb) => cb(null)); };
 
+const fail = (code) => Object.assign(new Error(code), { code });
+const enter = (user) => { F.user = user; F.authCbs.forEach((cb) => cb(F.user)); return { user }; };
+export const createUserWithEmailAndPassword = async (_a, email, pw) => {
+  F.accounts ||= {};
+  if (!/.+@.+\..+/.test(email)) throw fail('auth/invalid-email');
+  if (F.accounts[email]) throw fail('auth/email-already-in-use');
+  if (pw.length < 6) throw fail('auth/weak-password');
+  F.accounts[email] = { pw, uid: `u_${email}` };
+  return enter({ uid: F.accounts[email].uid, email });
+};
+export const signInWithEmailAndPassword = async (_a, email, pw) => {
+  const acc = (F.accounts ||= {})[email];
+  if (!acc || acc.pw !== pw) throw fail('auth/invalid-credential');
+  return enter({ uid: acc.uid, email });
+};
+export const sendPasswordResetEmail = async (_a, email) => { (F.resets ||= []).push(email); };
+
 export const initializeFirestore = () => ({});
 export const persistentLocalCache = () => ({});
 export const collection = (_db, ...path) => ({ path: path.join('/') });
