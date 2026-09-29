@@ -6,6 +6,8 @@ const KEY = 'osaifu:v1';
 // 日付を 2026-09-28 に固定して毎回同じ結果にする
 test.beforeEach(async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-09-28T10:00:00+09:00'));
+  // 本物の config.js（Firebase設定）に左右されないよう、既定は「未設定」。ログインのテストは後から上書きする
+  await page.route('**/config.js', (route) => route.fulfill({ body: 'window.OSAIFU_FIREBASE = null; window.OSAIFU_REQUIRE_LOGIN = false;', contentType: 'text/javascript' }));
   page.on('pageerror', (e) => { throw e; });
   await page.goto('/');
 });
