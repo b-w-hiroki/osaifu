@@ -340,3 +340,161 @@ test('支出の推移は6か月分を表示し、棒をタップするとその�
   await expect(page.locator('#title')).toHaveText('2026年7月');
   await expect(page.locator('.trend-col.cur')).toContainText('¥3,000');
 });
+
+const cardBase = {
+  wallets: [
+    { id: 'cash', name: '現金', initial: 10000 },
+    { id: 'bank', name: '銀行口座', initial: 100000 },
+    { id: 'card', name: 'カード', initial: 0, kind: 'card', closingDay: 15, payDay: 10, payMonthOffset: 1, payWalletId: 'bank', notifyDays: 3 },
+  ],
+  txs: [
+    { id: 'c1', type: 'expense', amount: 1000, date: '2026-08-05', category: 'food', walletId: 'card', memo: '' }, // 8/15締め → 9/10
+    { id: 'c2', type: 'expense', amount: 2000, date: '2026-08-20', category: 'food', walletId: 'card', memo: '' }, // 9/15締め → 10/10
+    { id: 'c3', type: 'expense', amount: 3000, date: '2026-09-10', category: 'food', walletId: 'card', memo: '' }, // 9/15締め → 10/10
+    { id: 'c4', type: 'expense', amount: 5000, date: '2026-09-20', category: 'food', walletId: 'card', memo: '' }, // 10/15締め → 11/10
+  ],
+  bills: [],
+  settings: { budget: 0, notify: false, lastNotified: '' },
+};
+
+test('支払いの頻度：隔月・年1回は起点の月から数えた月にだけ現れる', async ({ page }) => {
+  const r = await page.evaluate(() => {
+    const months = (b) => Array.from({ length: 12 }, (_, m) => m).filter((m) => billOccurs(b, 2026, m)).map((m) => m + 1);
+    return {
+      monthly: months({ every: 1 }),
+      quarterly: months({ every: 3, startMonth: 8 }),
+      yearly: months({ every: 12, startMonth: 10 }),
+      bimonthly: months({ every: 2, startMonth: 1 }),
+    };
+  });
+  expect(r.monthly).toHaveLength(12);
+  expect(r.quarterly).toEqual([2, 5, 8, 11]);
+  expect(r.yearly).toEqual([10]);
+  expect(r.bimonthly).toEqual([1, 3, 5, 7, 9, 11]);
+});
+
+test('年1回の予定を登録すると、その月にだけ表示される', async ({ page }) => {
+  await seed(page, base);
+  await page.getByText('＋ 支払いを登録').click();
+  await page.fill('#billForm input[name=name]', '自動車税');
+  await page.fill('#billForm input[name=amount]', '34500');
+  await page.selectOption('#billForm select[name=every]', '12');
+  await expect(page.locator('#billForm label', { hasText: '支払う月' })).toBeVisible();
+  await page.selectOption('#billForm select[name=startMonth]', '10');
+  await page.selectOption('#billForm select[name=day]', '30');
+  await page.click('#billForm button[type=submit]');
+
+  await expect(page.locator('.row-item', { hasText: '自動車税' })).toHaveCount(0); // 9月にはない
+  const b = (await state(page)).bills[0];
+  expect(b).toMatchObject({ every: 12, startMonth: 10, day: 30 });
+  await page.click('#nextMonth');
+  const row = page.locator('.row-item', { hasText: '自動車税' });
+  await expect(row).toContainText('年1回');
+  await expect(row).toContainText('¥34,500');
+  await page.click('#nextMonth');
+  await expect(page.locator('.row-item', { hasText: '自動車税' })).toHaveCount(0);
+});
+
+test('カードの引き落とし日は、締め日・引き落とし月の設定から決まる', async ({ page }) => {
+  const r = await page.evaluate(() => {
+    const fmt = (card, d) => { const x = cardPayDate(card, d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+    const a = { closingDay: 15, payDay: 10, payMonthOffset: 1 };
+    const b = { closingDay: 31, payDay: 27, payMonthOffset: 1 };
+    const c = { closingDay: 31, payDay: 31, payMonthOffset: 1 };
+    const d = { closingDay: 15, payDay: 10, payMonthOffset: 2 };
+    return [fmt(a, '2026-09-15'), fmt(a, '2026-09-16'), fmt(a, '2026-12-20'), fmt(b, '2026-09-30'), fmt(c, '2026-01-31'), fmt(d, '2026-09-10')];
+  });
+  expect(r).toEqual(['2026-10-10', '2026-11-10', '2027-02-10', '2026-10-27', '2026-02-28', '2026-11-10']);
+});
+
+test('カードの引き落とし予定：利用額から計算し、済にすると口座→カードの振替になる', async ({ page }) => {
+  await seed(page, cardBase);
+  // 9月の引き落とし＝8/5の利用分1,000円（期日を過ぎている）
+  const row = page.locator('.row-item', { hasText: '引き落とし' });
+  await expect(row).toContainText('¥1,000');
+  await expect(row).toContainText('超過');
+  await expect(page.locator('.card-head', { hasText: '支払い' })).toContainText('残り ¥1,000');
+  await expect(page.locator('[data-edit-wallet=card]')).toContainText('−¥11,000');
+
+  await row.locator('[data-pay]').click();
+  await expect(row.locator('[data-pay]')).toHaveText('済');
+  await expect(page.locator('[data-edit-wallet=bank]')).toContainText('¥99,000');
+  await expect(page.locator('[data-edit-wallet=card]')).toContainText('−¥10,000');
+  const t = (await state(page)).txs.find((x) => x.settleKey);
+  expect(t).toMatchObject({ type: 'transfer', amount: 1000, date: '2026-09-10', walletId: 'bank', toWalletId: 'card', settleKey: 'card:2026-09-10' });
+
+  // 取り消し
+  await page.locator('#toast button').click();
+  await expect(page.locator('[data-edit-wallet=bank]')).toContainText('¥100,000');
+
+  // 来月（10/10）は8/20と9/10の利用分5,000円、再来月（11/10）は5,000円
+  await page.click('#nextMonth');
+  await expect(page.locator('.row-item', { hasText: '引き落とし' })).toContainText('¥5,000');
+  await page.click('#nextMonth');
+  await expect(page.locator('.row-item', { hasText: '引き落とし' })).toContainText('¥5,000');
+});
+
+test('カードで払う予定は「残り」に含めず、引き落とし側で数える', async ({ page }) => {
+  await seed(page, { ...cardBase, txs: [], bills: [
+    { id: 'n', name: 'Netflix', amount: 1500, day: 30, category: 'subsc', walletId: 'card', notifyDays: 1 },
+    { id: 'r', name: '家賃', amount: 80000, day: 30, category: 'house', walletId: 'bank', notifyDays: 1 },
+  ] });
+  await expect(page.locator('.card-head', { hasText: '支払い' })).toContainText('残り ¥80,000');
+});
+
+test('引き落とし口座の残高が足りない時は警告する', async ({ page }) => {
+  const data = structuredClone(cardBase);
+  data.wallets[1].initial = 400; // 銀行口座の残高
+  await seed(page, data);
+  await expect(page.locator('.lack')).toContainText('銀行口座');
+  await expect(page.locator('.lack')).toContainText('¥600 不足');
+  // 足りている時は出さない
+  const ok = structuredClone(cardBase);
+  await seed(page, ok);
+  await expect(page.locator('.lack')).toHaveCount(0);
+});
+
+test('カレンダーの予定は口座別にまとめて小計を見られる', async ({ page }) => {
+  await seed(page, { ...cardBase, bills: [
+    { id: 'r', name: '家賃', amount: 80000, day: 27, category: 'house', walletId: 'bank', notifyDays: 1 },
+    { id: 's', name: '給与', amount: 300000, day: 25, category: 'salary', walletId: 'bank', notifyDays: 1, type: 'income' },
+  ] });
+  await page.click('[data-tab=cal]');
+  await page.click('[data-group] button[data-v=wallet]');
+  const head = page.locator('.day-head.in-card', { hasText: '銀行口座' });
+  await expect(head).toContainText('+¥219,000'); // 300,000 − 80,000 − カード引き落とし1,000
+});
+
+test('クレジットカードを追加し、締め日・引き落とし日・口座を設定できる', async ({ page }) => {
+  await seed(page, base);
+  await page.click('[data-tab=wallet]');
+  await page.click('[data-act=new-wallet]');
+  await page.click('#wForm .seg.type button[data-v=card]');
+  await page.fill('#wForm input[name=name]', '楽天カード');
+  await page.selectOption('#wForm select[name=closingDay]', '31');
+  await page.selectOption('#wForm select[name=payDay]', '27');
+  await page.selectOption('#wForm select[name=payWalletId]', 'bank');
+  await page.click('#wForm button[type=submit]');
+  const w = (await state(page)).wallets.find((x) => x.name === '楽天カード');
+  expect(w).toMatchObject({ kind: 'card', closingDay: 31, payDay: 27, payMonthOffset: 1, payWalletId: 'bank', initial: 0 });
+  await expect(page.locator('[data-edit-wallet]', { hasText: '楽天カード' })).toContainText('月末締め・翌月27日引き落とし');
+
+  // 引き落とし口座に使われている財布は削除できない
+  await page.click('[data-edit-wallet=bank]');
+  page.once('dialog', (d) => d.accept());
+  await page.click('#wForm [data-del]');
+  await expect(page.locator('#toast')).toContainText('削除できません');
+});
+
+test('.icsにカードの引き落としと年1回の予定が入る', async ({ page }) => {
+  await seed(page, { ...cardBase, bills: [
+    { id: 'y', name: '自動車税', amount: 34500, day: 5, category: 'other', walletId: 'bank', notifyDays: 3, every: 12, startMonth: 10 },
+  ] });
+  await page.click('[data-tab=wallet]');
+  const ics = await readDownload(page, () => page.click('[data-act=ics]'));
+  expect(ics).toContain('UID:card-card@osaifu');
+  expect(ics).toContain('SUMMARY:カード 引き落とし');
+  expect(ics).toContain('RRULE:FREQ=MONTHLY;BYMONTHDAY=10');
+  expect(ics).toContain('RRULE:FREQ=MONTHLY;INTERVAL=12;BYMONTHDAY=5');
+  expect(ics).toContain('DTSTART;VALUE=DATE:20261005'); // 今月(9月)には無いので10月が最初
+});

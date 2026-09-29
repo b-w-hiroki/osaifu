@@ -63,7 +63,7 @@ function seed() {
     wallets: [
       { id: 'cash', name: '現金', initial: 0 },
       { id: 'bank', name: '銀行口座', initial: 0 },
-      { id: 'card', name: 'クレジットカード', initial: 0 },
+      { id: 'card', name: 'クレジットカード', initial: 0, kind: 'card', closingDay: 15, payDay: 10, payMonthOffset: 1, payWalletId: 'bank', notifyDays: 3 },
     ],
     txs: [],
     bills: [],
@@ -93,6 +93,7 @@ const UI = {
   m: now.getMonth(),
   sel: todayStr(),
   filter: 'all',
+  group: 'date',
 };
 
 /* ---------- domain ---------- */
@@ -130,11 +131,48 @@ function dueDate(bill, y, m) {
 const paidTx = (bill, y, m) => S.txs.find((t) => t.billId === bill.id && t.billMonth === ym(y, m));
 const billType = (b) => (b.type === 'income' ? 'income' : 'expense');
 
+const EVERY_OPTS = [[1, '毎月'], [2, '2か月ごと'], [3, '3か月ごと'], [6, '半年ごと'], [12, '年1回']];
+const freqLabel = (b) => ({ 2: '隔月', 3: '3か月毎', 6: '半年毎', 12: '年1回' })[Number(b.every)] || '';
+/** その月に支払いがあるか（起点の月から every か月ごと） */
+function billOccurs(b, y, m) {
+  const e = Number(b.every) || 1;
+  if (e === 1) return true;
+  const start = Number(b.startMonth) || 1;
+  return (((m + 1 - start) % e) + e) % e === 0;
+}
+
+const isCard = (w) => w?.kind === 'card';
+const clampDay = (y, m, d) => Math.min(d, new Date(y, m + 1, 0).getDate());
+
+/** カードの利用日から、その分の引き落とし日を求める（締め日を過ぎた分は翌月締め） */
+function cardPayDate(card, dateStr) {
+  const d = parseYmd(dateStr);
+  const cy = d.getFullYear();
+  let cm = d.getMonth();
+  if (d.getDate() > clampDay(cy, cm, Number(card.closingDay) || 31)) cm += 1;
+  const p = new Date(cy, cm + (card.payMonthOffset ?? 1), 1);
+  return new Date(p.getFullYear(), p.getMonth(), clampDay(p.getFullYear(), p.getMonth(), Number(card.payDay) || 1));
+}
+
+/** 引き落とし日ごとの利用額（返金は差し引く）。キーは引き落とし日 YYYY-MM-DD */
+function cardCharges(card) {
+  const groups = new Map();
+  for (const t of S.txs) {
+    if (t.walletId !== card.id) continue;
+    const amt = t.type === 'expense' ? t.amount : t.type === 'income' ? -t.amount : 0;
+    if (!amt) continue;
+    const key = ymd(cardPayDate(card, t.date));
+    groups.set(key, (groups.get(key) || 0) + amt);
+  }
+  return groups;
+}
+const settleTx = (cardId, key) => S.txs.find((t) => t.settleKey === `${cardId}:${key}`);
+
 /** 指定月の定期支払い一覧（期日順） */
 function monthBills(y, m) {
   const today = parseYmd(todayStr());
   return S.bills
-    .filter((b) => b.active !== false)
+    .filter((b) => b.active !== false && billOccurs(b, y, m))
     .map((b) => {
       const due = dueDate(b, y, m);
       const tx = paidTx(b, y, m);
@@ -148,6 +186,51 @@ function monthBills(y, m) {
     .sort((a, b) => a.due - b.due);
 }
 
+/** 指定月のカード引き落とし（利用額から自動計算）。定期の予定と同じ形で返す */
+function monthCardItems(y, m) {
+  const today = parseYmd(todayStr());
+  const out = [];
+  for (const card of S.wallets.filter(isCard)) {
+    const groups = cardCharges(card);
+    const keys = new Set([...groups.keys()]);
+    for (const t of S.txs) if (t.settleKey?.startsWith(`${card.id}:`)) keys.add(t.settleKey.slice(card.id.length + 1));
+    for (const key of keys) {
+      if (!key.startsWith(ym(y, m))) continue;
+      const tx = settleTx(card.id, key);
+      const amount = tx ? tx.amount : groups.get(key) || 0;
+      if (amount <= 0) continue;
+      const due = parseYmd(key);
+      const diff = daysBetween(today, due);
+      let status = 'upcoming';
+      if (tx) status = 'paid';
+      else if (diff < 0) status = 'late';
+      else if (diff <= (card.notifyDays ?? 3)) status = 'soon';
+      out.push({
+        bill: { id: `card:${card.id}:${key}`, kind: 'card', name: card.name, tag: '引き落とし', amount, type: 'expense', category: 'card', walletId: card.payWalletId, cardId: card.id },
+        due, dueStr: key, tx, diff, status,
+      });
+    }
+  }
+  return out;
+}
+
+/** 支払い・収入・カード引き落としをまとめた月の予定（日付順） */
+const monthItems = (y, m) => [...monthBills(y, m), ...monthCardItems(y, m)].sort((a, b) => a.due - b.due);
+
+/** 今月の引き落とし予定に対して、口座の残高が足りるか */
+function shortages(y, m) {
+  const t = new Date();
+  if (y !== t.getFullYear() || m !== t.getMonth()) return [];
+  const need = new Map();
+  for (const it of monthItems(y, m)) {
+    if (it.tx || billType(it.bill) !== 'expense') continue;
+    const w = walletOf(it.bill.walletId);
+    if (!w || isCard(w)) continue;
+    need.set(w.id, (need.get(w.id) || 0) + it.bill.amount);
+  }
+  return [...need].map(([id, n]) => ({ w: walletOf(id), need: n, short: n - balance(id) })).filter((x) => x.short > 0);
+}
+
 function dueLabel(it) {
   if (it.status === 'paid') return '';
   if (it.diff < 0 && billType(it.bill) === 'income') return '<span class="badge warn">未入金</span>';
@@ -158,7 +241,32 @@ function dueLabel(it) {
   return `<span class="badge">${it.due.getDate()}日</span>`;
 }
 
+/** カードの引き落としを済にする／戻す（口座 → カードの振替を作る／消す） */
+function toggleSettle(itemId) {
+  const [, cardId, key] = itemId.split(':');
+  const card = walletOf(cardId);
+  if (!card) return;
+  const done = settleTx(cardId, key);
+  if (done) {
+    S.txs = S.txs.filter((t) => t !== done);
+    save(); render();
+    toast(`${card.name} の引き落としを未済に戻しました`);
+    return;
+  }
+  const amount = cardCharges(card).get(key) || 0;
+  if (amount <= 0) return;
+  if (!walletOf(card.payWalletId)) { toast('引き落とし口座を設定してください'); walletSheet(card); return; }
+  const date = key <= todayStr() ? key : todayStr();
+  const t = { id: uid(), type: 'transfer', amount, date, walletId: card.payWalletId, toWalletId: card.id, memo: `${card.name} 引き落とし`, settleKey: `${cardId}:${key}` };
+  S.txs.push(t);
+  save(); render();
+  toast(`${card.name} ${yen(amount)} を引き落とし済にしました`, '取り消し', () => {
+    S.txs = S.txs.filter((x) => x.id !== t.id); save(); render();
+  });
+}
+
 function togglePaid(billId, y, m) {
+  if (billId.startsWith('card:')) return toggleSettle(billId);
   const bill = S.bills.find((b) => b.id === billId);
   if (!bill) return;
   const tx = paidTx(bill, y, m);
@@ -203,9 +311,9 @@ function billRow(it) {
   return `
   <div class="row-item">
     ${mark(catOf(type, it.bill.category))}
-    <div class="row-main" data-edit-bill="${it.bill.id}"><div class="t"><span>${esc(it.bill.name)}</span>${dueLabel(it)}</div></div>
+    <div class="row-main" data-edit-bill="${it.bill.id}"><div class="t"><span>${esc(it.bill.name)}</span>${dueLabel(it)}</div>${it.bill.tag || freqLabel(it.bill) ? `<div class="s">${it.bill.tag || freqLabel(it.bill)}</div>` : ''}</div>
     <div class="amt num ${type === 'income' ? 'income' : ''}">${!it.tx && it.bill.variable ? '<small class="muted">約</small>' : ''}${yen(amount)}</div>
-    <button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${it.bill.id}">${it.tx ? '済' : type === 'income' ? '受取' : '支払う'}</button>
+    <button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${it.bill.id}">${it.tx ? '済' : it.bill.kind === 'card' ? '引落' : type === 'income' ? '受取' : '支払う'}</button>
   </div>`;
 }
 
@@ -227,9 +335,13 @@ function homeView() {
   const { y, m } = UI;
   const tot = totals(y, m);
   const budget = Number(S.settings.budget) || 0;
-  const bills = monthBills(y, m);
+  const bills = monthItems(y, m);
   const unpaid = bills.filter((b) => !b.tx);
-  const unpaidSum = unpaid.filter((b) => billType(b.bill) === 'expense').reduce((s, b) => s + b.bill.amount, 0);
+  // 残り＝口座・現金から出ていく未払い分（カード払いの予定は、引き落としの時に数える）
+  const unpaidSum = unpaid
+    .filter((b) => billType(b.bill) === 'expense' && !isCard(walletOf(b.bill.walletId)))
+    .reduce((s, b) => s + b.bill.amount, 0);
+  const lack = shortages(y, m);
   const shown = (unpaid.length ? unpaid : bills).slice(0, 3);
   const totalBal = S.wallets.reduce((s, w) => s + balance(w.id), 0);
 
@@ -272,6 +384,7 @@ function homeView() {
     <div class="wallet-strip">
       ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="wchip" data-edit-wallet="${w.id}"><span class="n">${esc(w.name)}</span><b class="num ${b < 0 ? 'expense' : ''}">${yen(b)}</b></button>`; }).join('')}
     </div>
+    ${lack.map((x) => `<div class="lack">${esc(x.w.name)}：今月の引き落とし ${yen(x.need)} に対して ${yen(x.short)} 不足</div>`).join('')}
   </section>
 
   <section class="card">
@@ -290,7 +403,7 @@ function calView() {
   const today = todayStr();
   if (!UI.sel.startsWith(ym(y, m))) UI.sel = today.startsWith(ym(y, m)) ? today : ymd(first);
 
-  const bills = monthBills(y, m);
+  const bills = monthItems(y, m);
   const perDay = {};
   for (const t of monthTxs(y, m)) {
     const d = perDay[t.date] || (perDay[t.date] = { ex: 0, in: 0 });
@@ -317,7 +430,7 @@ function calView() {
 
   const sel = parseYmd(UI.sel);
   const selBills = billsByDay[UI.sel] || [];
-  const selTxs = S.txs.filter((t) => t.date === UI.sel && !(t.billId && selBills.some((b) => b.tx === t)));
+  const selTxs = S.txs.filter((t) => t.date === UI.sel && !selBills.some((b) => b.tx === t));
 
   return `
   <section class="card cal">
@@ -337,9 +450,21 @@ function calView() {
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>毎月の予定</h2><button class="link" data-act="new-bill">＋ 追加</button></div>
-    ${bills.length ? `<div class="rows">${bills.map(billRow).join('')}</div>` : '<div class="empty">なし</div>'}
+    <div class="card-head"><h2>予定</h2><button class="link" data-act="new-bill">＋ 追加</button></div>
+    ${bills.length ? `<div class="seg mini" data-group>${[['date', '日付順'], ['wallet', '口座別']].map(([v, l]) => `<button data-v="${v}" class="${UI.group === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+      ${UI.group === 'wallet' ? scheduleByWallet(bills) : `<div class="rows">${bills.map(billRow).join('')}</div>`}` : '<div class="empty">なし</div>'}
   </section>`;
+}
+
+/** 支払い元・入金先の口座ごとにまとめる（出ていく額－入る額を小計に表示） */
+function scheduleByWallet(items) {
+  const groups = new Map();
+  for (const it of items) (groups.get(it.bill.walletId) || groups.set(it.bill.walletId, []).get(it.bill.walletId)).push(it);
+  return [...groups].map(([wid, list]) => {
+    const net = list.reduce((s, it) => s + (billType(it.bill) === 'income' ? 1 : -1) * (it.tx ? it.tx.amount : it.bill.amount), 0);
+    return `<div class="day-head in-card"><span>${esc(walletOf(wid)?.name || '未設定')}</span><span class="num">${signed(net)}</span></div>
+      <div class="rows">${list.map(billRow).join('')}</div>`;
+  }).join('');
 }
 
 /** 表示中の月までの6か月の支出（棒をタップでその月へ） */
@@ -406,7 +531,7 @@ function walletView() {
   <section class="card">
     <div class="card-head"><h2>財布</h2><button class="link" data-act="new-wallet">＋ 追加</button></div>
     <div class="rows">
-      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="row-item" data-edit-wallet="${w.id}">${walletMark(w)}<div class="row-main"><div class="t"><span>${esc(w.name)}</span></div></div><div class="amt num ${b < 0 ? 'expense' : ''}">${yen(b)}</div></button>`; }).join('')}
+      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="row-item" data-edit-wallet="${w.id}">${walletMark(w)}<div class="row-main"><div class="t"><span>${esc(w.name)}</span></div>${isCard(w) ? `<div class="s">${w.closingDay === 31 ? '月末' : w.closingDay + '日'}締め・${['当月', '翌月', '翌々月'][w.payMonthOffset ?? 1]}${w.payDay === 31 ? '末' : w.payDay + '日'}引き落とし</div>` : ''}</div><div class="amt num ${b < 0 ? 'expense' : ''}">${yen(b)}</div></button>`; }).join('')}
     </div>
     <button class="btn ghost block sm" data-act="transfer" style="margin-top:8px">振替</button>
   </section>
@@ -561,17 +686,21 @@ function readForm(f) {
 }
 
 function billSheet(bill) {
-  const b = { name: '', amount: '', day: 27, category: 'house', walletId: S.wallets.find((w) => w.id === 'bank')?.id || S.wallets[0]?.id, notifyDays: 1, type: 'expense', variable: false, ...bill };
+  const b = { name: '', amount: '', day: 27, category: 'house', walletId: S.wallets.find((w) => w.id === 'bank')?.id || S.wallets[0]?.id, notifyDays: 1, type: 'expense', variable: false, every: 1, startMonth: new Date().getMonth() + 1, ...bill };
   let type = billType(b);
   const body = () => `
     <form class="form" id="billForm">
-      <h3>${bill ? '毎月の予定を編集' : '毎月の予定を登録'}</h3>
+      <h3>${bill ? '予定を編集' : '予定を登録'}</h3>
       <div class="seg type">${[['expense', '支払い'], ['income', '収入']].map(([v, l]) => `<button type="button" data-v="${v}" class="${type === v ? 'on' : ''}">${l}</button>`).join('')}</div>
       <div class="field"><label>名前</label><input class="input" name="name" value="${esc(b.name)}" placeholder="${type === 'income' ? '例：給与' : '例：家賃、電気代、Netflix'}" required></div>
       <div class="amount-wrap"><span>¥</span><input class="amount-input num" name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${b.amount ? Number(b.amount).toLocaleString('ja-JP') : ''}" required></div>
       <label class="check"><input type="checkbox" name="variable" ${b.variable ? 'checked' : ''}> 毎月金額が変わる（記録時に入力）</label>
       <div class="grid2">
-        <div class="field"><label>毎月の${type === 'income' ? '入金日' : '支払日'}</label><select class="input" name="day">${Array.from({ length: 31 }, (_, i) => i + 1).map((d) => `<option value="${d}" ${d === b.day ? 'selected' : ''}>${d === 31 ? '月末' : d + '日'}</option>`).join('')}</select></div>
+        <div class="field"><label>頻度</label><select class="input" name="every">${EVERY_OPTS.map(([v, l]) => `<option value="${v}" ${v === Number(b.every) ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        ${Number(b.every) > 1 ? `<div class="field"><label>${Number(b.every) === 12 ? '支払う月' : '起点の月'}</label><select class="input" name="startMonth">${Array.from({ length: 12 }, (_, i) => i + 1).map((n) => `<option value="${n}" ${n === Number(b.startMonth) ? 'selected' : ''}>${n}月</option>`).join('')}</select></div>` : '<div></div>'}
+      </div>
+      <div class="grid2">
+        <div class="field"><label>${Number(b.every) === 1 ? '毎月の' : ''}${type === 'income' ? '入金日' : '支払日'}</label><select class="input" name="day">${Array.from({ length: 31 }, (_, i) => i + 1).map((d) => `<option value="${d}" ${d === b.day ? 'selected' : ''}>${d === 31 ? '月末' : d + '日'}</option>`).join('')}</select></div>
         <div class="field"><label>お知らせ</label><select class="input" name="notifyDays">${NOTIFY_OPTS.map(([v, l]) => `<option value="${v}" ${v === b.notifyDays ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       </div>
       <div class="field"><span class="lbl">カテゴリ</span>${catGrid(type, CATS[type].some((c) => c.id === b.category) ? b.category : CATS[type][0].id)}</div>
@@ -585,6 +714,7 @@ function billSheet(bill) {
       name: String(fd.get('name')).trim(), amount: parseAmount(fd.get('amount')), day: Number(fd.get('day')),
       notifyDays: Number(fd.get('notifyDays')), category: fd.get('category') || 'other', walletId: fd.get('walletId'),
       type, variable: fd.get('variable') === 'on',
+      every: Number(fd.get('every')) || 1, startMonth: Number(fd.get('startMonth')) || b.startMonth,
     };
   };
   const mount = (root) => {
@@ -596,6 +726,11 @@ function billSheet(bill) {
       if (!CATS[type].some((c) => c.id === b.category)) b.category = CATS[type][0].id;
       root.innerHTML = body(); mount(root);
     }));
+    // 頻度を変えると「支払う月」の欄が出入りするので、入力中の値を保って描き直す
+    f.every.addEventListener('change', () => {
+      Object.assign(b, readBill(f), { amount: parseAmount(f.amount.value) || '' });
+      root.innerHTML = body(); mount(root);
+    });
     f.addEventListener('submit', (e) => {
       e.preventDefault();
       const v = readBill(f);
@@ -619,36 +754,69 @@ function billSheet(bill) {
 }
 
 function walletSheet(w) {
-  const x = w || { name: '', initial: 0 };
-  openSheet(`
+  const x = { name: '', kind: 'asset', closingDay: 15, payDay: 10, payMonthOffset: 1, notifyDays: 3, payWalletId: '', ...w };
+  let kind = isCard(x) ? 'card' : 'asset';
+  const assets = () => S.wallets.filter((v) => !isCard(v) && v.id !== w?.id);
+  if (!x.payWalletId || !assets().some((v) => v.id === x.payWalletId)) x.payWalletId = assets()[0]?.id || '';
+  const days = (sel) => Array.from({ length: 31 }, (_, i) => i + 1).map((d) => `<option value="${d}" ${d === Number(sel) ? 'selected' : ''}>${d === 31 ? '月末' : d + '日'}</option>`).join('');
+  const body = () => `
     <form class="form" id="wForm">
-      <h3>${w ? '財布を編集' : '財布・口座を追加'}</h3>
-      <div class="field"><label>名前</label><input class="input" name="name" value="${esc(x.name)}" placeholder="例：PayPay、楽天銀行" required></div>
-      <div class="field"><label>現在の残高</label><input class="input num" name="balance" inputmode="numeric" value="${w ? balance(w.id) : ''}" placeholder="0"></div>
+      <h3>${w ? '財布を編集' : '財布・カードを追加'}</h3>
+      <div class="seg type">${[['asset', '財布・口座'], ['card', 'クレジットカード']].map(([v, l]) => `<button type="button" data-v="${v}" class="${kind === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="field"><label>名前</label><input class="input" name="name" value="${esc(x.name)}" placeholder="${kind === 'card' ? '例：楽天カード' : '例：PayPay、楽天銀行'}" required></div>
+      ${kind === 'card' ? `
+        <div class="grid2">
+          <div class="field"><label>締め日</label><select class="input" name="closingDay">${days(x.closingDay)}</select></div>
+          <div class="field"><label>引き落とし日</label><select class="input" name="payDay">${days(x.payDay)}</select></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>引き落とし月</label><select class="input" name="payMonthOffset">${[[1, '締め月の翌月'], [2, '締め月の翌々月'], [0, '締め月の当月']].map(([v, l]) => `<option value="${v}" ${v === Number(x.payMonthOffset) ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+          <div class="field"><label>お知らせ</label><select class="input" name="notifyDays">${NOTIFY_OPTS.map(([v, l]) => `<option value="${v}" ${v === Number(x.notifyDays) ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        </div>
+        <div class="field"><label>引き落とし口座</label><select class="input" name="payWalletId">${assets().map((v) => `<option value="${v.id}" ${v.id === x.payWalletId ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>`
+      : `<div class="field"><label>現在の残高</label><input class="input num" name="balance" inputmode="numeric" value="${w ? balance(w.id) : ''}" placeholder="0"></div>`}
       <button class="btn block" type="submit">${w ? '更新する' : '追加する'}</button>
       ${w ? '<button class="btn danger block" type="button" data-del>この財布を削除</button>' : ''}
-    </form>`, (root) => {
+    </form>`;
+  const mount = (root) => {
     const f = $('#wForm', root);
+    $$('.seg.type button', root).forEach((btn) => btn.addEventListener('click', () => {
+      x.name = f.name.value;
+      kind = btn.dataset.v;
+      root.innerHTML = body(); mount(root);
+    }));
     f.addEventListener('submit', (e) => {
       e.preventDefault();
       const fd = new FormData(f);
-      const entered = Number(String(fd.get('balance')).replace(/[^\d-]/g, '')) || 0;
-      // 記録から計算した増減はそのままに、残高が入力値になるよう起点を合わせる
-      const moved = w ? balance(w.id) - (Number(w.initial) || 0) : 0;
-      const v = { name: String(fd.get('name')).trim(), initial: entered - moved };
-      if (!v.name) return;
-      if (w) Object.assign(w, v); else S.wallets.push({ id: uid(), ...v });
+      const name = String(fd.get('name')).trim();
+      if (!name) return;
+      const CARD_KEYS = ['closingDay', 'payDay', 'payMonthOffset', 'notifyDays', 'payWalletId'];
+      if (kind === 'card') {
+        if (!fd.get('payWalletId')) { toast('引き落とし口座になる財布・口座を先に登録してください'); return; }
+        const v = {
+          name, kind: 'card', closingDay: Number(fd.get('closingDay')), payDay: Number(fd.get('payDay')),
+          payMonthOffset: Number(fd.get('payMonthOffset')), notifyDays: Number(fd.get('notifyDays')), payWalletId: fd.get('payWalletId'),
+        };
+        if (w) Object.assign(w, v); else S.wallets.push({ id: uid(), initial: 0, ...v });
+      } else {
+        const entered = Number(String(fd.get('balance')).replace(/[^\d-]/g, '')) || 0;
+        // 記録から計算した増減はそのままに、残高が入力値になるよう起点を合わせる
+        const moved = w ? balance(w.id) - (Number(w.initial) || 0) : 0;
+        if (w) { w.name = name; w.initial = entered - moved; w.kind = 'asset'; CARD_KEYS.forEach((k) => delete w[k]); }
+        else S.wallets.push({ id: uid(), name, kind: 'asset', initial: entered });
+      }
       save(); closeSheet(); render();
     });
     $('[data-del]', root)?.addEventListener('click', () => {
-      const used = S.txs.some((t) => t.walletId === w.id || t.toWalletId === w.id) || S.bills.some((b) => b.walletId === w.id);
-      if (used) { toast('記録や支払いで使われているため削除できません'); return; }
+      const used = S.txs.some((t) => t.walletId === w.id || t.toWalletId === w.id) || S.bills.some((v) => v.walletId === w.id) || S.wallets.some((v) => v.payWalletId === w.id);
+      if (used) { toast('記録・予定・カードの引き落とし口座で使われているため削除できません'); return; }
       if (S.wallets.length <= 1) { toast('最低1つの財布が必要です'); return; }
       if (!confirm(`「${w.name}」を削除しますか？`)) return;
-      S.wallets = S.wallets.filter((x) => x.id !== w.id);
+      S.wallets = S.wallets.filter((v) => v.id !== w.id);
       save(); closeSheet(); render();
     });
-  });
+  };
+  openSheet(body(), mount);
 }
 
 function budgetSheet() {
@@ -784,7 +952,7 @@ function checkDue(force = false) {
   if (!force && S.settings.lastNotified === today) return;
   const d = new Date();
   const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-  const items = [...monthBills(d.getFullYear(), d.getMonth()), ...monthBills(next.getFullYear(), next.getMonth())]
+  const items = [...monthItems(d.getFullYear(), d.getMonth()), ...monthItems(next.getFullYear(), next.getMonth())]
     .filter((i) => !i.tx && billType(i.bill) === 'expense' && (i.status === 'late' || i.status === 'soon'));
   S.settings.lastNotified = today;
   save();
@@ -796,29 +964,48 @@ function checkDue(force = false) {
 /* ---------- calendar (.ics) export ---------- */
 function exportIcs() {
   const bills = S.bills.filter((b) => b.active !== false);
-  if (!bills.length) { toast('毎月の支払いが登録されていません'); return; }
+  const cards = S.wallets.filter((w) => isCard(w) && w.payDay);
+  if (!bills.length && !cards.length) { toast('書き出す予定がありません'); return; }
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
-  const icsEsc = (s) => String(s).replace(/[\\;,]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
+  const icsEsc = (t) => String(t).replace(/[\;,]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
   const d = new Date();
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//osaifu//JA', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:おさいふ 支払い予定'];
-  for (const b of bills) {
-    const start = dueDate(b, d.getFullYear(), d.getMonth());
+  const event = ({ uid: id, summary, desc, day, notifyDays, every = 1, occurs, alarm }) => {
+    // 最初の予定日：今月から every か月以内で、支払いのある月
+    let start = null;
+    for (let k = 0; k < every && !start; k++) {
+      const t = new Date(d.getFullYear(), d.getMonth() + k, 1);
+      if (occurs(t.getFullYear(), t.getMonth())) start = new Date(t.getFullYear(), t.getMonth(), clampDay(t.getFullYear(), t.getMonth(), day));
+    }
     // 29〜31日指定は「その日がない月は月末」にする
-    const rule = b.day >= 29
-      ? `RRULE:FREQ=MONTHLY;BYMONTHDAY=${Array.from({ length: b.day - 27 }, (_, i) => 28 + i).join(',')};BYSETPOS=-1`
-      : `RRULE:FREQ=MONTHLY;BYMONTHDAY=${b.day}`;
-    const n = Number(b.notifyDays) || 0;
+    const monthDay = day >= 29
+      ? `BYMONTHDAY=${Array.from({ length: day - 27 }, (_, i) => 28 + i).join(',')};BYSETPOS=-1`
+      : `BYMONTHDAY=${day}`;
+    const rule = `RRULE:FREQ=MONTHLY;${every > 1 ? `INTERVAL=${every};` : ''}${monthDay}`;
+    const n = Number(notifyDays) || 0;
     const trigger = n === 0 ? 'PT9H' : `-PT${n * 24 - 9}H`; // 通知は午前9時
     const ds = ymd(start).replace(/-/g, '');
     const de = ymd(new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1)).replace(/-/g, '');
     lines.push(
-      'BEGIN:VEVENT', `UID:${b.id}@osaifu`, `DTSTAMP:${stamp}`,
+      'BEGIN:VEVENT', `UID:${id}@osaifu`, `DTSTAMP:${stamp}`,
       `DTSTART;VALUE=DATE:${ds}`, `DTEND;VALUE=DATE:${de}`, rule,
-      `SUMMARY:${icsEsc(`${b.name} ${b.variable ? '約' : ''}${yen(b.amount)}${billType(b) === 'income' ? '（入金）' : ''}`)}`,
-      `DESCRIPTION:${icsEsc(`支払い元：${walletOf(b.walletId)?.name || ''}`)}`,
-      'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEsc(`${b.name}の支払い`)}`, `TRIGGER:${trigger}`, 'END:VALARM',
+      `SUMMARY:${icsEsc(summary)}`, `DESCRIPTION:${icsEsc(desc)}`,
+      'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEsc(alarm)}`, `TRIGGER:${trigger}`, 'END:VALARM',
       'END:VEVENT',
     );
+  };
+  for (const b of bills) {
+    event({
+      uid: b.id, day: b.day, notifyDays: b.notifyDays, every: Number(b.every) || 1, occurs: (y, m) => billOccurs(b, y, m),
+      summary: `${b.name} ${b.variable ? '約' : ''}${yen(b.amount)}${billType(b) === 'income' ? '（入金）' : ''}`,
+      desc: `支払い元：${walletOf(b.walletId)?.name || ''}`, alarm: `${b.name}の支払い`,
+    });
+  }
+  for (const c of cards) {
+    event({
+      uid: `card-${c.id}`, day: c.payDay, notifyDays: c.notifyDays ?? 3, occurs: () => true,
+      summary: `${c.name} 引き落とし`, desc: `引き落とし口座：${walletOf(c.payWalletId)?.name || ''}`, alarm: `${c.name}の引き落とし`,
+    });
   }
   lines.push('END:VCALENDAR');
   download('osaifu-payments.ics', lines.join('\r\n'), 'text/calendar');
@@ -903,20 +1090,21 @@ view.addEventListener('touchend', (e) => {
 });
 
 document.addEventListener('click', (e) => {
-  const el = e.target.closest('[data-pay],[data-edit-bill],[data-edit-tx],[data-edit-wallet],[data-goto],[data-act],[data-day],[data-month],[data-filter] button');
+  const el = e.target.closest('[data-pay],[data-edit-bill],[data-edit-tx],[data-edit-wallet],[data-goto],[data-act],[data-day],[data-month],[data-filter] button,[data-group] button');
   if (!el) return;
   const ds = el.dataset;
   if (ds.pay) {
     const [y, m] = [UI.y, UI.m];
     return togglePaid(ds.pay, y, m);
   }
-  if (ds.editBill) return billSheet(S.bills.find((b) => b.id === ds.editBill));
+  if (ds.editBill) return ds.editBill.startsWith('card:') ? walletSheet(walletOf(ds.editBill.split(':')[1])) : billSheet(S.bills.find((b) => b.id === ds.editBill));
   if (ds.editTx) return txSheet(S.txs.find((t) => t.id === ds.editTx));
   if (ds.editWallet) return walletSheet(walletOf(ds.editWallet));
   if (ds.goto) { UI.tab = ds.goto; render(); view.scrollTop = 0; return; }
   if (ds.day) { UI.sel = ds.day; render(); return; }
   if (ds.month) { const [y, m] = ds.month.split('-').map(Number); UI.y = y; UI.m = m; render(); return; }
   if (el.parentElement?.dataset.filter !== undefined && ds.v) { UI.filter = ds.v; render(); return; }
+  if (el.parentElement?.dataset.group !== undefined && ds.v) { UI.group = ds.v; render(); return; }
   switch (ds.act) {
     case 'new-bill': return billSheet(null);
     case 'new-wallet': return walletSheet(null);
