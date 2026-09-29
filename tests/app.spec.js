@@ -211,3 +211,73 @@ test('支出の新規記録にだけ読み取りボタンが出る', async ({ pa
   await page.click('.seg.type button[data-v=income]');
   await expect(page.locator('[data-ocr]')).toHaveCount(0);
 });
+
+test('同期：3方向マージは片方の変更を採用し、両方変更なら端末側を優先する', async ({ page }) => {
+  const r = await page.evaluate(() => {
+    const rec = (amount) => ({ kind: 'tx', data: { id: 'x', amount } });
+    const c = Sync.canon;
+    const base = { a: c(rec(1)), b: c(rec(1)), d: c(rec(1)), e: c(rec(1)), f: c(rec(1)) };
+    const local = { a: rec(2), b: rec(1), d: rec(1), e: rec(5), n: rec(9) /* f は端末で削除 */ };
+    const remote = { a: rec(1), b: rec(3), e: rec(6), f: rec(1), m: rec(8) /* d はクラウドで削除 */ };
+    const m = Sync.merge(local, base, remote);
+    return { amounts: Object.fromEntries(Object.entries(m.recs).map(([k, v]) => [k, v.data.amount])), push: m.push.sort(), del: m.del.sort() };
+  });
+  expect(r.amounts).toEqual({ a: 2, b: 3, e: 5, n: 9, m: 8 });
+  expect(r.push).toEqual(['a', 'e', 'n']);
+  expect(r.del).toEqual(['f']);
+});
+
+test.describe('クラウド同期（Firebaseを代替して検証）', () => {
+  test.beforeEach(async ({ page }) => {
+    const fake = fs.readFileSync(new URL('./fake-firebase.js', import.meta.url), 'utf8');
+    await page.route('https://www.gstatic.com/firebasejs/**', (route) => route.fulfill({ body: fake, contentType: 'text/javascript', headers: { 'access-control-allow-origin': '*' } }));
+    await page.route('**/config.js', (route) => route.fulfill({ body: "window.OSAIFU_FIREBASE = { apiKey: 'test', projectId: 'test' };", contentType: 'text/javascript' }));
+    // クラウドには別端末で記録した支出が1件ある
+    await page.addInitScript(() => {
+      globalThis.__fake = { docs: new Map([['t_remote1', { kind: 'tx', data: { id: 'remote1', type: 'expense', amount: 777, date: '2026-09-15', category: 'food', walletId: 'cash', memo: '別端末' } }]]), listeners: [], authCbs: [], writes: [], user: null };
+    });
+  });
+
+  test('ログインで双方の記録がそろい、以後の変更が往復する', async ({ page }) => {
+    await seed(page, { ...base, txs: [{ id: 'local1', type: 'expense', amount: 500, date: '2026-09-20', category: 'fun', walletId: 'cash', memo: 'この端末' }] });
+    await page.click('[data-tab=wallet]');
+    await page.getByText('Googleでログイン').click();
+    await expect(page.locator('.set-row', { hasText: 'クラウド同期' })).toContainText('同期済み');
+    await expect(page.locator('.set-row', { hasText: 'クラウド同期' })).toContainText('test@example.com');
+
+    // クラウド → 端末
+    let s = await state(page);
+    expect(s.txs.map((t) => t.id).sort()).toEqual(['local1', 'remote1']);
+    // 端末 → クラウド（財布・設定・端末の記録）
+    const remoteIds = await page.evaluate(() => [...__fake.docs.keys()].sort());
+    expect(remoteIds).toEqual(['_settings', 't_local1', 't_remote1', 'w_bank', 'w_cash']);
+
+    // 別端末でクラウドの記録が変更された
+    await page.evaluate(() => {
+      const d = __fake.docs.get('t_remote1'); d.data.amount = 800; __fake.docs.set('t_remote1', d); __fake.emit();
+    });
+    await page.click('[data-tab=list]');
+    await expect(page.locator('[data-edit-tx=remote1]')).toContainText('¥800');
+
+    // 端末で削除 → クラウドからも消える
+    page.once('dialog', (d) => d.accept());
+    await page.click('[data-edit-tx=local1]');
+    await page.click('#txForm [data-del]');
+    await expect.poll(() => page.evaluate(() => __fake.docs.has('t_local1'))).toBe(false);
+
+    // ログアウトしても端末のデータは残る
+    await page.click('[data-tab=wallet]');
+    await page.getByText('ログアウト').click();
+    await expect(page.getByText('Googleでログイン')).toBeVisible();
+    s = await state(page);
+    expect(s.txs.map((t) => t.id)).toEqual(['remote1']);
+  });
+});
+
+test('Firebase未設定なら同期の項目は出ずSDKも読み込まない', async ({ page }) => {
+  const sdk = [];
+  page.on('request', (r) => { if (r.url().includes('firebasejs')) sdk.push(r.url()); });
+  await page.click('[data-tab=wallet]');
+  await expect(page.getByText('クラウド同期')).toHaveCount(0);
+  expect(sdk).toEqual([]);
+});

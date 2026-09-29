@@ -78,8 +78,12 @@ function load() {
   return seed();
 }
 let S = load();
-function save() {
+function saveLocal() {
   try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('保存に失敗しました'); }
+}
+function save() {
+  saveLocal();
+  Sync.push();
 }
 
 const now = new Date();
@@ -352,6 +356,16 @@ function listView() {
   }).join('') : '<section class="card"><div class="empty">記録なし</div></section>'}`;
 }
 
+const SYNC_LABEL = { syncing: '同期中', synced: '同期済み', offline: 'オフライン', error: '同期エラー' };
+function syncRow() {
+  if (!Sync.enabled) return '';
+  const on = Sync.status !== 'signedOut';
+  return `<div class="set-row">
+      <div class="row-main"><div class="t">クラウド同期</div>${on ? `<div class="s">${esc(Sync.email)} ${SYNC_LABEL[Sync.status] || ''}</div>` : ''}</div>
+      ${on ? '<button class="btn ghost sm" data-act="sync-out">ログアウト</button>' : '<button class="btn sm" data-act="sync-in">Googleでログイン</button>'}
+    </div>`;
+}
+
 function walletView() {
   const total = S.wallets.reduce((s, w) => s + balance(w.id), 0);
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
@@ -371,6 +385,7 @@ function walletView() {
 
   <section class="card">
     <div class="card-head"><h2>設定</h2></div>
+    ${syncRow()}
     <div class="set-row">
       <div class="row-main"><div class="t">通知</div>${note ? `<div class="s">${note}</div>` : ''}</div>
       <label class="switch"><input type="checkbox" id="notifyToggle" ${S.settings.notify && perm === 'granted' ? 'checked' : ''} ${note ? 'disabled' : ''}><span></span></label>
@@ -862,10 +877,12 @@ document.addEventListener('click', (e) => {
     case 'budget': return budgetSheet();
     case 'ics': return exportIcs();
     case 'csv': return exportCsv();
+    case 'sync-in': return Sync.signIn();
+    case 'sync-out': return Sync.signOut();
     case 'export': return download(`osaifu-backup-${todayStr()}.json`, JSON.stringify(S, null, 2), 'application/json');
     case 'import': return importJson();
     case 'reset':
-      if (confirm('すべてのデータを削除します。元に戻せません。よろしいですか？')) { S = seed(); save(); render(); toast('削除しました'); }
+      if (confirm(`すべてのデータを削除します${Sync.status !== 'signedOut' && Sync.enabled ? '（クラウドの記録も削除されます）' : ''}。元に戻せません。よろしいですか？`)) { S = seed(); save(); render(); toast('削除しました'); }
       return;
   }
 });
