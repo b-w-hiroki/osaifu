@@ -342,6 +342,26 @@ function calView() {
   </section>`;
 }
 
+/** 表示中の月までの6か月の支出（棒をタップでその月へ） */
+function trendCard() {
+  const months = Array.from({ length: 6 }, (_, i) => new Date(UI.y, UI.m - 5 + i, 1));
+  const vals = months.map((d) => totals(d.getFullYear(), d.getMonth()).expense);
+  const max = Math.max(...vals);
+  if (!max) return '';
+  return `<section class="card trend" aria-label="支出の推移">
+    <div class="card-head"><h2>支出の推移</h2></div>
+    <div class="trend-bars">${months.map((d, i) => {
+      const cur = i === 5;
+      const label = `${d.getMonth() + 1}月`;
+      return `<button class="trend-col ${cur ? 'cur' : ''}" data-month="${d.getFullYear()}-${d.getMonth()}" aria-label="${label} ${yen(vals[i])}" data-tip="${yen(vals[i])}">
+        ${cur ? `<span class="trend-val num">${yen(vals[i])}</span>` : ''}
+        <span class="trend-bar" style="height:${vals[i] ? Math.max(3, (vals[i] / max) * 100) : 0}%"></span>
+        <span class="trend-m">${label}</span>
+      </button>`;
+    }).join('')}</div>
+  </section>`;
+}
+
 function listView() {
   const { y, m } = UI;
   const f = UI.filter;
@@ -352,6 +372,7 @@ function listView() {
   for (const t of txs) (groups[t.date] ||= []).push(t);
 
   return `
+  ${trendCard()}
   <div class="seg" data-filter>
     ${[['all', 'すべて'], ['expense', '支出'], ['income', '収入'], ['transfer', '振替']].map(([v, l]) => `<button data-v="${v}" class="${f === v ? 'on' : ''}">${l}</button>`).join('')}
   </div>
@@ -882,7 +903,7 @@ view.addEventListener('touchend', (e) => {
 });
 
 document.addEventListener('click', (e) => {
-  const el = e.target.closest('[data-pay],[data-edit-bill],[data-edit-tx],[data-edit-wallet],[data-goto],[data-act],[data-day],[data-filter] button');
+  const el = e.target.closest('[data-pay],[data-edit-bill],[data-edit-tx],[data-edit-wallet],[data-goto],[data-act],[data-day],[data-month],[data-filter] button');
   if (!el) return;
   const ds = el.dataset;
   if (ds.pay) {
@@ -894,6 +915,7 @@ document.addEventListener('click', (e) => {
   if (ds.editWallet) return walletSheet(walletOf(ds.editWallet));
   if (ds.goto) { UI.tab = ds.goto; render(); view.scrollTop = 0; return; }
   if (ds.day) { UI.sel = ds.day; render(); return; }
+  if (ds.month) { const [y, m] = ds.month.split('-').map(Number); UI.y = y; UI.m = m; render(); return; }
   if (el.parentElement?.dataset.filter !== undefined && ds.v) { UI.filter = ds.v; render(); return; }
   switch (ds.act) {
     case 'new-bill': return billSheet(null);

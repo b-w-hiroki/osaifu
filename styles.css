@@ -315,3 +315,24 @@ button { cursor: pointer; }
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
 .check input { width: 18px; height: 18px; accent-color: var(--primary); }
 .amt small { font-size: 11px; font-weight: 500; margin-right: 2px; }
+
+/* 支出の推移（単一系列の棒。表示中の月だけ濃く、金額を直接表示） */
+.trend-bars { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; height: 104px; }
+.trend-col {
+  position: relative; border: 0; background: none; padding: 16px 4px 0;
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px;
+}
+.trend-bar { width: 60%; max-width: 28px; border-radius: 4px 4px 0 0; background: color-mix(in srgb, var(--text) 18%, transparent); }
+.trend-col.cur .trend-bar { background: var(--primary); }
+.trend-m { font-size: 11px; color: var(--muted); line-height: 1; padding-top: 2px; border-top: 1px solid var(--line); width: 100%; }
+.trend-col.cur .trend-m { color: var(--text); font-weight: 700; }
+.trend-val { position: absolute; top: 0; left: 50%; transform: translateX(-50%); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.trend-bars > :first-child .trend-val { left: 0; transform: none; }
+.trend-bars > :last-child .trend-val { left: auto; right: 0; transform: none; }
+@media (hover: hover) {
+  .trend-col:not(.cur):hover .trend-bar { background: color-mix(in srgb, var(--primary) 55%, transparent); }
+  .trend-col:not(.cur):hover::after {
+    content: attr(data-tip); position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+    font-size: 11px; font-weight: 700; white-space: nowrap; background: var(--text); color: var(--bg); padding: 1px 5px; border-radius: 4px;
+  }
+}

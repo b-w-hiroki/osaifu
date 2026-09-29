@@ -327,3 +327,16 @@ test('財布の現在の残高を入力すると、その金額に合わせら�
   await expect(page.locator('[data-edit-wallet=cash]')).toContainText('¥9,000');
   expect((await state(page)).wallets.find((w) => w.id === 'cash').initial).toBe(10500);
 });
+
+test('支出の推移は6か月分を表示し、棒をタップするとその月へ移る', async ({ page }) => {
+  await seed(page, { ...base, txs: [
+    { id: '1', type: 'expense', amount: 3000, date: '2026-07-10', category: 'food', walletId: 'cash', memo: '' },
+    { id: '2', type: 'expense', amount: 1200, date: '2026-09-10', category: 'food', walletId: 'cash', memo: '' },
+  ] });
+  await page.click('[data-tab=list]');
+  await expect(page.locator('.trend-col')).toHaveCount(6);
+  await expect(page.locator('.trend-col.cur')).toContainText('¥1,200');
+  await page.click('[data-month="2026-6"]');
+  await expect(page.locator('#title')).toHaveText('2026年7月');
+  await expect(page.locator('.trend-col.cur')).toContainText('¥3,000');
+});
