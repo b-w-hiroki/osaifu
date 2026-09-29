@@ -170,3 +170,44 @@ test('タブバーはスクロールしても画面下に固定される', async
   expect(Math.round(before.y + before.height)).toBe(vh);
   expect(after.y).toBe(before.y);
 });
+
+test('レシートの文字から合計・日付・店名・カテゴリを推定する', async ({ page }) => {
+  const cases = [
+    {
+      text: 'イオン 新宿店\nTEL 03-1234-5678\n2026年9月27日(日) 18:32\n牛乳 ¥198\nパン ¥248\n小計 ¥446\n消費税 ¥35\n合計 ¥481\nお預り ¥1,000\nお釣り ¥519',
+      want: { amount: 481, date: '2026-09-27', store: 'イオン新宿店', category: 'food' },
+    },
+    {
+      // 全角・桁区切りのゆれ、合計の金額が次の行
+      text: 'マツモトキヨシ\n領収書\n2026/09/05\n合 計\n￥２，９８０\nお預り ￥３，０００',
+      want: { amount: 2980, date: '2026-09-05', store: 'マツモトキヨシ', category: 'daily' },
+    },
+    {
+      text: '中央クリニック\n令和8年9月1日\n診療費 1.500円\nお支払金額 1.500円',
+      want: { amount: 1500, date: '2026-09-01', store: '中央クリニック', category: 'medical' },
+    },
+    {
+      // 合計行が読めない場合は円表記の最大額
+      text: 'カフェ ABC\n2026.9.3\nコーヒー 450円\nケーキ 520円\n970円',
+      want: { amount: 970, date: '2026-09-03', store: 'カフェ ABC', category: 'food' },
+    },
+    {
+      // 実際の文字認識結果（文字間の空白、¥が「\」、桁区切りが「.」）
+      text: 'イオ ン 新宿 店\n2026 年 9 月 27 日 18:32\n牛乳 \\198\n\n小計 \\446\n\n合計 \\481\n\nお 預り \\1.000\n',
+      want: { amount: 481, date: '2026-09-27', store: 'イオン新宿店', category: 'food' },
+    },
+    { text: 'ぼやけて読めない', want: { amount: 0, date: '' } },
+  ];
+  for (const c of cases) {
+    const got = await page.evaluate((t) => parseReceipt(t), c.text);
+    expect(got, c.text.split('\n')[0]).toMatchObject(c.want);
+  }
+});
+
+test('支出の新規記録にだけ読み取りボタンが出る', async ({ page }) => {
+  await seed(page, base);
+  await page.click('#fab');
+  await expect(page.locator('[data-ocr]')).toBeVisible();
+  await page.click('.seg.type button[data-v=income]');
+  await expect(page.locator('[data-ocr]')).toHaveCount(0);
+});

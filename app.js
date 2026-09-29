@@ -432,6 +432,7 @@ function txSheet(tx, preset = {}) {
       <h3>${tx ? '記録を編集' : '記録する'}</h3>
       <div class="seg type">${[['expense', '支出'], ['income', '収入'], ['transfer', '振替']].map(([v, l]) => `<button type="button" data-v="${v}" class="${type === v ? 'on' : ''}">${l}</button>`).join('')}</div>
       <div class="amount-wrap"><span>¥</span><input class="amount-input num" name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${t.amount ? Number(t.amount).toLocaleString('ja-JP') : ''}" required></div>
+      ${type === 'expense' && !tx ? '<button type="button" class="btn ghost sm block" data-ocr>レシートを読み取る</button><input type="file" accept="image/*" data-ocr-file hidden>' : ''}
       ${type === 'transfer' ? `
         <div class="grid2">
           <div class="field"><label>出金元</label><select class="input" name="walletId">${walletOptions(t.walletId)}</select></div>
@@ -476,6 +477,30 @@ function txSheet(tx, preset = {}) {
       if (!confirm('この記録を削除しますか？')) return;
       S.txs = S.txs.filter((x) => x.id !== tx.id);
       save(); closeSheet(); render(); toast('削除しました');
+    });
+    const ocrBtn = $('[data-ocr]', root);
+    const ocrFile = $('[data-ocr-file]', root);
+    ocrBtn?.addEventListener('click', () => ocrFile.click());
+    ocrFile?.addEventListener('change', async () => {
+      const file = ocrFile.files[0];
+      if (!file) return;
+      ocrBtn.disabled = true;
+      ocrBtn.textContent = '読み取り中…';
+      try {
+        const r = await readReceipt(file, (p) => { ocrBtn.textContent = `読み取り中… ${Math.round(p * 100)}%`; });
+        if (!f.isConnected) return;
+        if (r.amount) amt.value = r.amount.toLocaleString('ja-JP');
+        if (r.date) f.date.value = r.date;
+        if (r.store && !f.memo.value) f.memo.value = r.store;
+        if (r.category) { const c = $(`input[name=category][value="${r.category}"]`, f); if (c) c.checked = true; }
+        toast(r.amount ? '読み取りました。内容を確認してください' : '合計金額を読み取れませんでした');
+      } catch (e) {
+        toast('読み取りに失敗しました（通信環境を確認してください）');
+      } finally {
+        ocrBtn.disabled = false;
+        ocrBtn.textContent = 'レシートを読み取る';
+        ocrFile.value = '';
+      }
     });
     if (!tx) setTimeout(() => amt.focus(), 250);
   };
@@ -581,6 +606,92 @@ function budgetSheet() {
     });
     setTimeout(() => f.budget.focus(), 250);
   });
+}
+
+/* ---------- receipt OCR ---------- */
+// 画像は端末内で文字認識し、外部には送らない（ライブラリと日本語データのみCDNから取得）
+const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+let tesseractLoading = null;
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  return (tesseractLoading ||= new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = TESSERACT_URL;
+    el.onload = () => resolve(window.Tesseract);
+    el.onerror = () => { tesseractLoading = null; el.remove(); reject(new Error('load failed')); };
+    document.head.appendChild(el);
+  }));
+}
+
+/** 認識を速くするため長辺1600pxに縮小 */
+async function shrinkImage(file, max = 1600) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bmp.width * scale);
+  canvas.height = Math.round(bmp.height * scale);
+  canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+async function readReceipt(file, onProgress) {
+  const T = await loadTesseract();
+  const img = await shrinkImage(file);
+  const { data } = await T.recognize(img, 'jpn', {
+    logger: (m) => { if (m.status === 'recognizing text') onProgress(m.progress); },
+  });
+  return parseReceipt(data.text);
+}
+
+const RECEIPT_CATEGORY = [
+  [/病院|クリニック|医院|歯科|調剤/, 'medical'],
+  [/ドラッグ|薬|マツモトキヨシ|ウエルシア|ツルハ|スギ|ダイソー|セリア|ニトリ|無印/, 'daily'],
+  [/JR|鉄道|タクシー|バス|駐車|ガソリン|ENEOS|出光|コスモ/i, 'transport'],
+  [/書店|ブック/, 'edu'],
+  [/ユニクロ|UNIQLO|GU|しまむら|ZARA/i, 'clothes'],
+  [/スーパー|マート|イオン|AEON|西友|ライフ|イトーヨーカドー|まいばすけっと|業務|ローソン|セブン|ファミリー|ミニストップ|コンビニ|食品|ベーカリー|パン|カフェ|珈琲|コーヒー|スターバックス|マクドナルド|吉野家|すき家|松屋|食堂|レストラン|弁当/i, 'food'],
+];
+
+/** レシートの文字認識結果から合計金額・日付・店名・カテゴリを推定する */
+function parseReceipt(text) {
+  // 文字認識は日本語の文字間に空白を入れるので詰める。「¥」は「\」と読まれることがある
+  const jp = '\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー';
+  const lines = String(text).normalize('NFKC').replace(/\\/g, '¥').split(/\r?\n/)
+    .map((l) => l.replace(/[ \t]+/g, ' ').replace(new RegExp(`(?<=[${jp}]) (?=[${jp}])`, 'gu'), '').trim())
+    .filter(Boolean);
+  // 「1,234」「1.234」「1 234」のような桁区切りをまとめる
+  const numbersIn = (l) => [...l.replace(/(\d)[,. ](?=\d{3}(?!\d))/g, '$1').matchAll(/\d+/g)].map((m) => Number(m[0]));
+  const plausible = (n) => n > 0 && n < 10000000;
+
+  let amount = 0;
+  const totalRe = /合\s*計|総\s*額|お?買\s*上|お?買い上げ|ご?請求|お?支払(?:金額|合計)?/;
+  const excludeRe = /小\s*計|預|釣|税|点数|内\s*訳|割引|値引|ポイント/;
+  for (let i = 0; i < lines.length && !amount; i++) {
+    if (!totalRe.test(lines[i]) || excludeRe.test(lines[i])) continue;
+    const here = numbersIn(lines[i]).filter(plausible);
+    const next = lines[i + 1] && !excludeRe.test(lines[i + 1]) ? numbersIn(lines[i + 1]).filter(plausible) : [];
+    amount = here.at(-1) || next.at(-1) || 0;
+  }
+  if (!amount) {
+    // 合計行が読めない時は「¥」「円」付きの最大額
+    const yenNums = lines.filter((l) => !excludeRe.test(l) && /¥|円/.test(l)).flatMap(numbersIn).filter(plausible);
+    amount = yenNums.length ? Math.max(...yenNums) : 0;
+  }
+
+  let date = '';
+  const joined = lines.join('\n');
+  const valid = (y, m, d) => m >= 1 && m <= 12 && d >= 1 && d <= 31 ? `${y}-${pad(m)}-${pad(d)}` : '';
+  const western = joined.match(/(20\d{2})\s*[年/.\-]\s*(\d{1,2})\s*[月/.\-]\s*(\d{1,2})/);
+  const reiwa = joined.match(/令和\s*(\d{1,2}|元)\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})/);
+  if (western) date = valid(+western[1], +western[2], +western[3]);
+  else if (reiwa) date = valid(2018 + (reiwa[1] === '元' ? 1 : +reiwa[1]), +reiwa[2], +reiwa[3]);
+
+  const store = lines.slice(0, 6).find((l) =>
+    (l.match(/[^\d\s\-:/.,¥]/g) || []).length >= 2 && !/領収|レシート|明細|TEL|電話|〒|登録番号|\d{2,4}-\d{2,4}-\d{3,4}|\d{4}[年/]/i.test(l),
+  )?.slice(0, 20) || '';
+  const category = RECEIPT_CATEGORY.find(([re]) => re.test(store))?.[1] || '';
+
+  return { amount, date, store, category };
 }
 
 /* ---------- notifications ---------- */

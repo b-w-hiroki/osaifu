@@ -43,7 +43,8 @@ html, body { margin: 0; }
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+  font-family: "Inter", "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+  font-feature-settings: "palt";
   font-size: 15px;
   line-height: 1.5;
   -webkit-tap-highlight-color: transparent;
