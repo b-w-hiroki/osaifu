@@ -281,3 +281,49 @@ test('Firebase未設定なら同期の項目は出ずSDKも読み込まない', 
   await expect(page.getByText('クラウド同期')).toHaveCount(0);
   expect(sdk).toEqual([]);
 });
+
+test('金額が変わる支払いは記録画面で金額を確定し、次回の目安に反映される', async ({ page }) => {
+  await seed(page, { ...base, bills: [{ id: 'elec', name: '電気代', amount: 8000, day: 30, category: 'utility', walletId: 'bank', notifyDays: 1, variable: true }] });
+  const row = page.locator('.row-item', { hasText: '電気代' }).first();
+  await expect(row).toContainText('約¥8,000');
+  await row.locator('[data-pay]').click();
+  await expect(page.locator('#txForm input[name=amount]')).toHaveValue('8,000');
+  await page.fill('#txForm input[name=amount]', '9100');
+  await page.click('#txForm button[type=submit]');
+  await expect(row.locator('[data-pay]')).toHaveText('済');
+  await expect(row).toContainText('¥9,100');
+  const s = await state(page);
+  expect(s.txs[0]).toMatchObject({ amount: 9100, billId: 'elec', billMonth: '2026-09', type: 'expense' });
+  expect(s.bills[0].amount).toBe(9100);
+});
+
+test('毎月の収入を登録して受け取りを記録できる', async ({ page }) => {
+  await seed(page, base);
+  await page.getByText('＋ 支払いを登録').click();
+  await page.click('#billForm .seg.type button[data-v=income]');
+  await page.fill('#billForm input[name=name]', '給与');
+  await page.fill('#billForm input[name=amount]', '280000');
+  await page.selectOption('#billForm select[name=day]', '25');
+  await page.click('#billForm button[type=submit]');
+
+  const row = page.locator('.row-item', { hasText: '給与' }).first();
+  await expect(row).toContainText('未入金');
+  await row.getByText('受取').click();
+  await expect(page.locator('.summary .income')).toHaveText('¥280,000');
+  const s = await state(page);
+  expect(s.bills[0]).toMatchObject({ type: 'income', category: 'salary' });
+  expect(s.txs[0]).toMatchObject({ type: 'income', amount: 280000, category: 'salary', billId: s.bills[0].id });
+  // 収入は「残り」の支払額に含めない
+  await expect(page.locator('.card-head', { hasText: '支払い' })).not.toContainText('残り');
+});
+
+test('財布の現在の残高を入力すると、その金額に合わせられる', async ({ page }) => {
+  await seed(page, { ...base, txs: [{ id: '1', type: 'expense', amount: 1500, date: '2026-09-10', category: 'food', walletId: 'cash', memo: '' }] });
+  await page.click('[data-tab=wallet]');
+  await page.click('[data-edit-wallet=cash]');
+  await expect(page.locator('#wForm input[name=balance]')).toHaveValue('8500');
+  await page.fill('#wForm input[name=balance]', '9000');
+  await page.click('#wForm button[type=submit]');
+  await expect(page.locator('[data-edit-wallet=cash]')).toContainText('¥9,000');
+  expect((await state(page)).wallets.find((w) => w.id === 'cash').initial).toBe(10500);
+});

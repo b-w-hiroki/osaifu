@@ -190,10 +190,12 @@ button { cursor: pointer; }
 .dots i { width: 10px; height: 3px; border-radius: 1px; background: var(--warn); }
 .dots i.paid { background: var(--muted); opacity: .5; }
 .dots i.late { background: var(--expense); }
+.dots i.in { background: var(--income); }
 .cal-legend { display: flex; gap: 12px; justify-content: center; font-size: 11px; color: var(--muted); margin-top: 6px; }
 .cal-legend i { display: inline-block; width: 10px; height: 3px; border-radius: 1px; background: var(--warn); margin-right: 4px; vertical-align: middle; }
 .cal-legend i.paid { background: var(--muted); opacity: .5; }
 .cal-legend i.late { background: var(--expense); }
+.cal-legend i.in { background: var(--income); }
 
 /* ---------- list ---------- */
 .seg {
@@ -309,3 +311,7 @@ button { cursor: pointer; }
 }
 .toast[hidden] { display: none; }
 .toast button { background: none; border: 0; white-space: nowrap; color: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+
+.check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+.check input { width: 18px; height: 18px; accent-color: var(--primary); }
+.amt small { font-size: 11px; font-weight: 500; margin-right: 2px; }

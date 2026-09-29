@@ -128,6 +128,7 @@ function dueDate(bill, y, m) {
   return new Date(y, m, Math.min(bill.day, last));
 }
 const paidTx = (bill, y, m) => S.txs.find((t) => t.billId === bill.id && t.billMonth === ym(y, m));
+const billType = (b) => (b.type === 'income' ? 'income' : 'expense');
 
 /** 指定月の定期支払い一覧（期日順） */
 function monthBills(y, m) {
@@ -149,6 +150,7 @@ function monthBills(y, m) {
 
 function dueLabel(it) {
   if (it.status === 'paid') return '';
+  if (it.diff < 0 && billType(it.bill) === 'income') return '<span class="badge warn">未入金</span>';
   if (it.diff < 0) return `<span class="badge danger">${-it.diff}日超過</span>`;
   if (it.diff === 0) return '<span class="badge danger">今日</span>';
   if (it.diff === 1) return '<span class="badge warn">明日</span>';
@@ -170,12 +172,14 @@ function togglePaid(billId, y, m) {
   const today = new Date();
   const date = today < due && today.getFullYear() === y && today.getMonth() === m ? todayStr() : ymd(due);
   const t = {
-    id: uid(), type: 'expense', amount: bill.amount, date, category: bill.category,
+    id: uid(), type: billType(bill), amount: bill.amount, date, category: bill.category,
     walletId: bill.walletId, memo: bill.name, billId: bill.id, billMonth: ym(y, m),
   };
+  // 金額が毎月変わるものは、前回の金額を入れた記録画面で確定する
+  if (bill.variable) { txSheet(null, t); return; }
   S.txs.push(t);
   save(); render();
-  toast(`${bill.name} ${yen(bill.amount)} を支払済にしました`, '取り消し', () => {
+  toast(`${bill.name} ${yen(bill.amount)} を${t.type === 'income' ? '受取済' : '支払済'}にしました`, '取り消し', () => {
     S.txs = S.txs.filter((x) => x.id !== t.id); save(); render();
   });
 }
@@ -193,12 +197,15 @@ function render() {
 }
 
 function billRow(it) {
+  const type = billType(it.bill);
+  // 支払済は実際の金額、未払いで金額が変わるものは目安として表示
+  const amount = it.tx ? it.tx.amount : it.bill.amount;
   return `
   <div class="row-item">
-    ${mark(catOf('expense', it.bill.category))}
+    ${mark(catOf(type, it.bill.category))}
     <div class="row-main" data-edit-bill="${it.bill.id}"><div class="t"><span>${esc(it.bill.name)}</span>${dueLabel(it)}</div></div>
-    <div class="amt num">${yen(it.bill.amount)}</div>
-    <button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${it.bill.id}">${it.tx ? '済' : '支払う'}</button>
+    <div class="amt num ${type === 'income' ? 'income' : ''}">${!it.tx && it.bill.variable ? '<small class="muted">約</small>' : ''}${yen(amount)}</div>
+    <button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${it.bill.id}">${it.tx ? '済' : type === 'income' ? '受取' : '支払う'}</button>
   </div>`;
 }
 
@@ -222,7 +229,7 @@ function homeView() {
   const budget = Number(S.settings.budget) || 0;
   const bills = monthBills(y, m);
   const unpaid = bills.filter((b) => !b.tx);
-  const unpaidSum = unpaid.reduce((s, b) => s + b.bill.amount, 0);
+  const unpaidSum = unpaid.filter((b) => billType(b.bill) === 'expense').reduce((s, b) => s + b.bill.amount, 0);
   const shown = (unpaid.length ? unpaid : bills).slice(0, 3);
   const totalBal = S.wallets.reduce((s, w) => s + balance(w.id), 0);
 
@@ -253,7 +260,7 @@ function homeView() {
   <section class="card">
     <div class="card-head">
       <h2>支払い</h2>
-      ${unpaid.length ? `<span class="head-val num">残り ${yen(unpaidSum)}</span>` : bills.length ? '<span class="head-val">完了</span>' : ''}
+      ${unpaidSum ? `<span class="head-val num">残り ${yen(unpaidSum)}</span>` : bills.length && !unpaid.length ? '<span class="head-val">完了</span>' : ''}
     </div>
     ${bills.length ? `<div class="rows">${shown.map(billRow).join('')}</div>
       ${bills.length > shown.length ? `<button class="link more" data-goto="cal">ほか${bills.length - shown.length}件</button>` : ''}`
@@ -302,7 +309,7 @@ function calView() {
     const bd = billsByDay[ds] || [];
     cells += `<button class="cal-day ${wd === 0 ? 'sun' : wd === 6 ? 'sat' : ''} ${ds === today ? 'today' : ''} ${ds === UI.sel ? 'sel' : ''}" data-day="${ds}">
       <span class="d">${d}</span>
-      ${bd.length ? `<span class="dots">${bd.map((b) => `<i class="${b.status === 'paid' ? 'paid' : b.status === 'late' ? 'late' : ''}"></i>`).join('')}</span>` : ''}
+      ${bd.length ? `<span class="dots">${bd.map((b) => `<i class="${b.status === 'paid' ? 'paid' : billType(b.bill) === 'income' ? 'in' : b.status === 'late' ? 'late' : ''}"></i>`).join('')}</span>` : ''}
       ${pd?.in ? `<span class="in num">+${compact(pd.in)}</span>` : ''}
       ${pd?.ex ? `<span class="ex num">-${compact(pd.ex)}</span>` : ''}
     </button>`;
@@ -318,7 +325,7 @@ function calView() {
       ${WD.map((w, i) => `<div class="cal-wd ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</div>`).join('')}
       ${cells}
     </div>
-    <div class="cal-legend"><span><i></i>予定</span><span><i class="late"></i>超過</span><span><i class="paid"></i>済</span></div>
+    <div class="cal-legend"><span><i></i>支払い</span><span><i class="in"></i>収入</span><span><i class="late"></i>超過</span><span><i class="paid"></i>済</span></div>
   </section>
 
   <section class="card">
@@ -330,7 +337,7 @@ function calView() {
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>毎月の支払い</h2><button class="link" data-act="new-bill">＋ 追加</button></div>
+    <div class="card-head"><h2>毎月の予定</h2><button class="link" data-act="new-bill">＋ 追加</button></div>
     ${bills.length ? `<div class="rows">${bills.map(billRow).join('')}</div>` : '<div class="empty">なし</div>'}
   </section>`;
 }
@@ -482,9 +489,12 @@ function txSheet(tx, preset = {}) {
       const v = readForm(f);
       if (!v.amount) { amt.focus(); toast('金額を入力してください'); return; }
       if (type === 'transfer' && v.walletId === v.toWalletId) { toast('出金元と入金先が同じです'); return; }
-      const rec = { ...(tx || { id: uid() }), type, ...v };
+      const link = preset.billId ? { billId: preset.billId, billMonth: preset.billMonth } : {};
+      const rec = { ...(tx || { id: uid(), ...link }), type, ...v };
       if (type !== 'transfer') delete rec.toWalletId; else delete rec.category;
       if (tx) Object.assign(tx, rec); else S.txs.push(rec);
+      const bill = rec.billId && S.bills.find((b) => b.id === rec.billId);
+      if (bill?.variable && !tx) bill.amount = rec.amount;
       save(); closeSheet(); render();
       toast(tx ? '更新しました' : `${type === 'income' ? '収入' : type === 'expense' ? '支出' : '振替'} ${yen(rec.amount)} を記録しました`);
     });
@@ -530,30 +540,44 @@ function readForm(f) {
 }
 
 function billSheet(bill) {
-  const b = bill || { name: '', amount: '', day: 27, category: 'house', walletId: S.wallets.find((w) => w.id === 'bank')?.id || S.wallets[0]?.id, notifyDays: 1 };
-  openSheet(`
+  const b = { name: '', amount: '', day: 27, category: 'house', walletId: S.wallets.find((w) => w.id === 'bank')?.id || S.wallets[0]?.id, notifyDays: 1, type: 'expense', variable: false, ...bill };
+  let type = billType(b);
+  const body = () => `
     <form class="form" id="billForm">
-      <h3>${bill ? '毎月の支払いを編集' : '毎月の支払いを登録'}</h3>
-      <div class="field"><label>名前</label><input class="input" name="name" value="${esc(b.name)}" placeholder="例：家賃、電気代、Netflix" required></div>
+      <h3>${bill ? '毎月の予定を編集' : '毎月の予定を登録'}</h3>
+      <div class="seg type">${[['expense', '支払い'], ['income', '収入']].map(([v, l]) => `<button type="button" data-v="${v}" class="${type === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="field"><label>名前</label><input class="input" name="name" value="${esc(b.name)}" placeholder="${type === 'income' ? '例：給与' : '例：家賃、電気代、Netflix'}" required></div>
       <div class="amount-wrap"><span>¥</span><input class="amount-input num" name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${b.amount ? Number(b.amount).toLocaleString('ja-JP') : ''}" required></div>
+      <label class="check"><input type="checkbox" name="variable" ${b.variable ? 'checked' : ''}> 毎月金額が変わる（記録時に入力）</label>
       <div class="grid2">
-        <div class="field"><label>毎月の支払日</label><select class="input" name="day">${Array.from({ length: 31 }, (_, i) => i + 1).map((d) => `<option value="${d}" ${d === b.day ? 'selected' : ''}>${d === 31 ? '月末' : d + '日'}</option>`).join('')}</select></div>
+        <div class="field"><label>毎月の${type === 'income' ? '入金日' : '支払日'}</label><select class="input" name="day">${Array.from({ length: 31 }, (_, i) => i + 1).map((d) => `<option value="${d}" ${d === b.day ? 'selected' : ''}>${d === 31 ? '月末' : d + '日'}</option>`).join('')}</select></div>
         <div class="field"><label>お知らせ</label><select class="input" name="notifyDays">${NOTIFY_OPTS.map(([v, l]) => `<option value="${v}" ${v === b.notifyDays ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       </div>
-      <div class="field"><span class="lbl">カテゴリ</span>${catGrid('expense', b.category)}</div>
-      <div class="field"><label>支払い元</label><select class="input" name="walletId">${walletOptions(b.walletId)}</select></div>
+      <div class="field"><span class="lbl">カテゴリ</span>${catGrid(type, CATS[type].some((c) => c.id === b.category) ? b.category : CATS[type][0].id)}</div>
+      <div class="field"><label>${type === 'income' ? '入金先' : '支払い元'}</label><select class="input" name="walletId">${walletOptions(b.walletId)}</select></div>
       <button class="btn block" type="submit">${bill ? '更新する' : '登録する'}</button>
-      ${bill ? '<button class="btn danger block" type="button" data-del>この支払いを削除</button>' : ''}
-    </form>`, (root) => {
+      ${bill ? '<button class="btn danger block" type="button" data-del>この予定を削除</button>' : ''}
+    </form>`;
+  const readBill = (f) => {
+    const fd = new FormData(f);
+    return {
+      name: String(fd.get('name')).trim(), amount: parseAmount(fd.get('amount')), day: Number(fd.get('day')),
+      notifyDays: Number(fd.get('notifyDays')), category: fd.get('category') || 'other', walletId: fd.get('walletId'),
+      type, variable: fd.get('variable') === 'on',
+    };
+  };
+  const mount = (root) => {
     const f = $('#billForm', root);
     f.amount.addEventListener('input', () => { const n = parseAmount(f.amount.value); f.amount.value = n ? n.toLocaleString('ja-JP') : ''; });
+    $$('.seg.type button', root).forEach((btn) => btn.addEventListener('click', () => {
+      Object.assign(b, readBill(f), { amount: parseAmount(f.amount.value) || '' });
+      type = btn.dataset.v;
+      if (!CATS[type].some((c) => c.id === b.category)) b.category = CATS[type][0].id;
+      root.innerHTML = body(); mount(root);
+    }));
     f.addEventListener('submit', (e) => {
       e.preventDefault();
-      const fd = new FormData(f);
-      const v = {
-        name: String(fd.get('name')).trim(), amount: parseAmount(fd.get('amount')), day: Number(fd.get('day')),
-        notifyDays: Number(fd.get('notifyDays')), category: fd.get('category') || 'other', walletId: fd.get('walletId'),
-      };
+      const v = readBill(f);
       if (!v.name || !v.amount) { toast('名前と金額を入力してください'); return; }
       if (bill) Object.assign(bill, v); else S.bills.push({ id: uid(), active: true, ...v });
       save(); closeSheet(); render();
@@ -563,13 +587,14 @@ function billSheet(bill) {
       }
     });
     $('[data-del]', root)?.addEventListener('click', () => {
-      if (!confirm(`「${bill.name}」を削除しますか？\n（過去の支払い記録は残ります）`)) return;
+      if (!confirm(`「${bill.name}」を削除しますか？\n（過去の記録は残ります）`)) return;
       S.bills = S.bills.filter((x) => x.id !== bill.id);
       S.txs.forEach((t) => { if (t.billId === bill.id) delete t.billId; });
       save(); closeSheet(); render(); toast('削除しました');
     });
     if (!bill) setTimeout(() => f.name.focus(), 250);
-  });
+  };
+  openSheet(body(), mount);
 }
 
 function walletSheet(w) {
@@ -578,8 +603,7 @@ function walletSheet(w) {
     <form class="form" id="wForm">
       <h3>${w ? '財布を編集' : '財布・口座を追加'}</h3>
       <div class="field"><label>名前</label><input class="input" name="name" value="${esc(x.name)}" placeholder="例：PayPay、楽天銀行" required></div>
-      <div class="field"><label>初期残高（現在の残高を入力）</label><input class="input num" name="initial" inputmode="numeric" value="${Number(x.initial) || ''}" placeholder="0"></div>
-      ${w ? `<div class="muted" style="font-size:12px">現在の残高：${yen(balance(w.id))}</div>` : ''}
+      <div class="field"><label>現在の残高</label><input class="input num" name="balance" inputmode="numeric" value="${w ? balance(w.id) : ''}" placeholder="0"></div>
       <button class="btn block" type="submit">${w ? '更新する' : '追加する'}</button>
       ${w ? '<button class="btn danger block" type="button" data-del>この財布を削除</button>' : ''}
     </form>`, (root) => {
@@ -587,8 +611,10 @@ function walletSheet(w) {
     f.addEventListener('submit', (e) => {
       e.preventDefault();
       const fd = new FormData(f);
-      const raw = String(fd.get('initial')).replace(/[^\d-]/g, '');
-      const v = { name: String(fd.get('name')).trim(), initial: Number(raw) || 0 };
+      const entered = Number(String(fd.get('balance')).replace(/[^\d-]/g, '')) || 0;
+      // 記録から計算した増減はそのままに、残高が入力値になるよう起点を合わせる
+      const moved = w ? balance(w.id) - (Number(w.initial) || 0) : 0;
+      const v = { name: String(fd.get('name')).trim(), initial: entered - moved };
       if (!v.name) return;
       if (w) Object.assign(w, v); else S.wallets.push({ id: uid(), ...v });
       save(); closeSheet(); render();
@@ -738,7 +764,7 @@ function checkDue(force = false) {
   const d = new Date();
   const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
   const items = [...monthBills(d.getFullYear(), d.getMonth()), ...monthBills(next.getFullYear(), next.getMonth())]
-    .filter((i) => !i.tx && (i.status === 'late' || i.status === 'soon'));
+    .filter((i) => !i.tx && billType(i.bill) === 'expense' && (i.status === 'late' || i.status === 'soon'));
   S.settings.lastNotified = today;
   save();
   if (!items.length) return;
@@ -767,7 +793,7 @@ function exportIcs() {
     lines.push(
       'BEGIN:VEVENT', `UID:${b.id}@osaifu`, `DTSTAMP:${stamp}`,
       `DTSTART;VALUE=DATE:${ds}`, `DTEND;VALUE=DATE:${de}`, rule,
-      `SUMMARY:${icsEsc(`${b.name} ${yen(b.amount)}`)}`,
+      `SUMMARY:${icsEsc(`${b.name} ${b.variable ? '約' : ''}${yen(b.amount)}${billType(b) === 'income' ? '（入金）' : ''}`)}`,
       `DESCRIPTION:${icsEsc(`支払い元：${walletOf(b.walletId)?.name || ''}`)}`,
       'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEsc(`${b.name}の支払い`)}`, `TRIGGER:${trigger}`, 'END:VALARM',
       'END:VEVENT',
