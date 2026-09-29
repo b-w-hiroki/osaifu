@@ -3,13 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0f766e">
+  <meta name="theme-color" content="#f7f5f0" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="おさいふ">
   <title>おさいふ</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -22,11 +23,11 @@
   <main id="view" class="view"></main>
 
   <nav class="tabbar" aria-label="メニュー">
-    <button data-tab="home" class="tab"><span class="tab-ic">🏠</span><span>ホーム</span></button>
-    <button data-tab="cal" class="tab"><span class="tab-ic">📅</span><span>カレンダー</span></button>
+    <button data-tab="home" class="tab"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20h-5.5v-5.5h-5V20H4z"/></svg><span>ホーム</span></button>
+    <button data-tab="cal" class="tab"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5.5" width="16" height="14.5" rx="1.5"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></svg><span>カレンダー</span></button>
     <button id="fab" class="fab" aria-label="記録する">＋</button>
-    <button data-tab="list" class="tab"><span class="tab-ic">🧾</span><span>履歴</span></button>
-    <button data-tab="wallet" class="tab"><span class="tab-ic">👛</span><span>財布</span></button>
+    <button data-tab="list" class="tab"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h12v17l-2-1.3-2 1.3-2-1.3-2 1.3-2-1.3-2 1.3z"/><path d="M9 8.5h6M9 12h6M9 15.5h3.5"/></svg><span>履歴</span></button>
+    <button data-tab="wallet" class="tab"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h14.5a1.5 1.5 0 0 1 1.5 1.5v9.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5z"/><path d="M4 7.5 15 4.5v3M15.5 13.5h4.5"/></svg><span>財布</span></button>
   </nav>
 
   <div id="sheet" class="sheet" hidden>

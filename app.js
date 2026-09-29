@@ -9,31 +9,30 @@ const KEY = 'osaifu:v1';
 
 const CATS = {
   expense: [
-    { id: 'food', name: '食費', icon: '🍙', color: '#f59e0b' },
-    { id: 'daily', name: '日用品', icon: '🧴', color: '#10b981' },
-    { id: 'house', name: '住居', icon: '🏠', color: '#6366f1' },
-    { id: 'utility', name: '光熱費', icon: '💡', color: '#eab308' },
-    { id: 'phone', name: '通信', icon: '📱', color: '#0ea5e9' },
-    { id: 'transport', name: '交通', icon: '🚃', color: '#14b8a6' },
-    { id: 'subsc', name: 'サブスク', icon: '🔁', color: '#a855f7' },
-    { id: 'insurance', name: '保険', icon: '🛡️', color: '#64748b' },
-    { id: 'medical', name: '医療', icon: '🏥', color: '#ef4444' },
-    { id: 'fun', name: '娯楽', icon: '🎮', color: '#ec4899' },
-    { id: 'clothes', name: '衣服', icon: '👕', color: '#8b5cf6' },
-    { id: 'edu', name: '教育', icon: '📚', color: '#3b82f6' },
-    { id: 'social', name: '交際費', icon: '🍻', color: '#f97316' },
-    { id: 'card', name: 'カード', icon: '💳', color: '#78716c' },
-    { id: 'other', name: 'その他', icon: '📦', color: '#94a3b8' },
+    { id: 'food', name: '食費', icon: '食', color: '#c0793a' },
+    { id: 'daily', name: '日用品', icon: '日', color: '#6f8f5e' },
+    { id: 'house', name: '住居', icon: '住', color: '#5a6f93' },
+    { id: 'utility', name: '光熱費', icon: '光', color: '#b0913a' },
+    { id: 'phone', name: '通信', icon: '信', color: '#4f86a6' },
+    { id: 'transport', name: '交通', icon: '交', color: '#4a8a86' },
+    { id: 'subsc', name: 'サブスク', icon: '定', color: '#8a6aa3' },
+    { id: 'insurance', name: '保険', icon: '保', color: '#6c7480' },
+    { id: 'medical', name: '医療', icon: '医', color: '#b35b55' },
+    { id: 'fun', name: '娯楽', icon: '遊', color: '#b0647f' },
+    { id: 'clothes', name: '衣服', icon: '衣', color: '#7d6aa0' },
+    { id: 'edu', name: '教育', icon: '学', color: '#4d6fa8' },
+    { id: 'social', name: '交際費', icon: '際', color: '#c2703f' },
+    { id: 'card', name: 'カード', icon: 'カ', color: '#7a7066' },
+    { id: 'other', name: 'その他', icon: '他', color: '#8e8a80' },
   ],
   income: [
-    { id: 'salary', name: '給与', icon: '💼', color: '#059669' },
-    { id: 'bonus', name: '賞与', icon: '🎁', color: '#16a34a' },
-    { id: 'side', name: '副業', icon: '💻', color: '#0d9488' },
-    { id: 'gift', name: 'お小遣い', icon: '🧧', color: '#65a30d' },
-    { id: 'other_in', name: 'その他', icon: '💰', color: '#84cc16' },
+    { id: 'salary', name: '給与', icon: '給', color: '#3d7a4f' },
+    { id: 'bonus', name: '賞与', icon: '賞', color: '#4f8a45' },
+    { id: 'side', name: '副業', icon: '副', color: '#3f7f76' },
+    { id: 'gift', name: 'お小遣い', icon: '贈', color: '#6f8a3a' },
+    { id: 'other_in', name: 'その他', icon: '他', color: '#7a8a4a' },
   ],
 };
-const WALLET_ICONS = ['👛', '🏦', '💳', '📱', '🐷', '💴', '🪙', '🏧'];
 const NOTIFY_OPTS = [[0, '当日'], [1, '1日前'], [3, '3日前'], [7, '7日前']];
 
 /* ---------- utils ---------- */
@@ -51,15 +50,20 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const WD = ['日', '月', '火', '水', '木', '金', '土'];
 const todayStr = () => ymd(new Date());
 const daysBetween = (a, b) => Math.round((b - a) / 86400000);
-const catOf = (type, id) => (CATS[type] || CATS.expense).find((c) => c.id === id) || { name: '未分類', icon: '📦', color: '#94a3b8' };
+const catOf = (type, id) => (CATS[type] || CATS.expense).find((c) => c.id === id) || { name: '未分類', icon: '他', color: '#8e8a80' };
+const TRANSFER = { name: '振替', icon: '移', color: '#6c7480' };
+const WALLET_COLORS = ['#5a6f93', '#3d7a4f', '#b0913a', '#b35b55', '#8a6aa3', '#4a8a86'];
+/** 分類・財布の目印（色付きの1文字） */
+const mark = (c) => `<div class="ic" style="--c:${c.color}">${esc(c.icon)}</div>`;
+const walletMark = (w) => mark({ icon: [...(w?.name || '?')][0], color: WALLET_COLORS[Math.max(0, S.wallets.indexOf(w)) % WALLET_COLORS.length] });
 
 /* ---------- state ---------- */
 function seed() {
   return {
     wallets: [
-      { id: 'cash', name: '現金', icon: '👛', initial: 0 },
-      { id: 'bank', name: '銀行口座', icon: '🏦', initial: 0 },
-      { id: 'card', name: 'クレジットカード', icon: '💳', initial: 0 },
+      { id: 'cash', name: '現金', initial: 0 },
+      { id: 'bank', name: '銀行口座', initial: 0 },
+      { id: 'card', name: 'クレジットカード', initial: 0 },
     ],
     txs: [],
     bills: [],
@@ -140,12 +144,12 @@ function monthBills(y, m) {
 }
 
 function dueLabel(it) {
-  if (it.status === 'paid') return '<span class="badge ok">支払済</span>';
+  if (it.status === 'paid') return '';
   if (it.diff < 0) return `<span class="badge danger">${-it.diff}日超過</span>`;
   if (it.diff === 0) return '<span class="badge danger">今日</span>';
   if (it.diff === 1) return '<span class="badge warn">明日</span>';
   if (it.status === 'soon') return `<span class="badge warn">あと${it.diff}日</span>`;
-  return `<span class="badge">あと${it.diff}日</span>`;
+  return `<span class="badge">${it.due.getDate()}日</span>`;
 }
 
 function togglePaid(billId, y, m) {
@@ -177,42 +181,33 @@ const view = $('#view');
 
 function render() {
   const showMonth = UI.tab !== 'wallet';
-  $('#title').textContent = showMonth ? `${UI.y}年${UI.m + 1}月` : '財布・設定';
+  $('#title').textContent = showMonth ? `${UI.y}年${UI.m + 1}月` : '財布';
   $('#prevMonth').hidden = !showMonth;
   $('#nextMonth').hidden = !showMonth;
   $$('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === UI.tab));
   view.innerHTML = { home: homeView, cal: calView, list: listView, wallet: walletView }[UI.tab]();
 }
 
-function billRow(it, withButton = true) {
-  const c = catOf('expense', it.bill.category);
-  const d = it.due;
+function billRow(it) {
   return `
   <div class="row-item">
-    <div class="ic">${c.icon}</div>
-    <div class="row-main" data-edit-bill="${it.bill.id}">
-      <div class="t"><span>${esc(it.bill.name)}</span>${dueLabel(it)}</div>
-      <div class="s">${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]}) ・ ${esc(walletOf(it.bill.walletId)?.name || '')}</div>
-    </div>
+    ${mark(catOf('expense', it.bill.category))}
+    <div class="row-main" data-edit-bill="${it.bill.id}"><div class="t"><span>${esc(it.bill.name)}</span>${dueLabel(it)}</div></div>
     <div class="amt num">${yen(it.bill.amount)}</div>
-    ${withButton ? `<button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${it.bill.id}">${it.tx ? '済' : '支払う'}</button>` : ''}
+    <button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${it.bill.id}">${it.tx ? '済' : '支払う'}</button>
   </div>`;
 }
 
 function txRow(t) {
   const isTr = t.type === 'transfer';
-  const c = isTr ? { icon: '🔄', name: '振替' } : catOf(t.type, t.category);
-  const w = walletOf(t.walletId)?.name || '';
-  const sub = isTr ? `${esc(w)} → ${esc(walletOf(t.toWalletId)?.name || '')}` : esc(w);
-  const cls = t.type === 'income' ? 'income' : t.type === 'expense' ? '' : 'muted';
+  const c = isTr ? TRANSFER : catOf(t.type, t.category);
+  const title = isTr ? `${walletOf(t.walletId)?.name || ''} → ${walletOf(t.toWalletId)?.name || ''}` : t.memo || c.name;
+  const cls = t.type === 'income' ? 'income' : isTr ? 'muted' : '';
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   return `
   <button class="row-item" data-edit-tx="${t.id}">
-    <div class="ic">${c.icon}</div>
-    <div class="row-main">
-      <div class="t"><span>${esc(t.memo || c.name)}</span></div>
-      <div class="s">${t.memo ? esc(c.name) + ' ・ ' : ''}${sub}${t.billId ? ' ・ 定期' : ''}</div>
-    </div>
+    ${mark(c)}
+    <div class="row-main"><div class="t"><span>${esc(title)}</span></div></div>
     <div class="amt num ${cls}">${sign}${yen(t.amount)}</div>
   </button>`;
 }
@@ -227,26 +222,22 @@ function homeView() {
   const shown = (unpaid.length ? unpaid : bills).slice(0, 3);
   const totalBal = S.wallets.reduce((s, w) => s + balance(w.id), 0);
 
-  // カテゴリ別
+  // カテゴリ別（上位4件＋その他）
   const byCat = {};
   for (const t of monthTxs(y, m)) if (t.type === 'expense') byCat[t.category] = (byCat[t.category] || 0) + t.amount;
   const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
-  const top = cats.slice(0, 5);
-  const rest = cats.slice(5).reduce((s, [, v]) => s + v, 0);
+  const top = cats.slice(0, 4);
+  const rest = cats.slice(4).reduce((s, [, v]) => s + v, 0);
   if (rest) top.push(['__rest', rest]);
 
-  const budgetHtml = budget ? (() => {
-    const pct = Math.min(100, (tot.expense / budget) * 100);
-    const left = budget - tot.expense;
-    return `<div class="budget ${left < 0 ? 'over' : ''}">
-      <div class="bar"><span style="width:${pct}%"></span></div>
-      <div class="budget-meta"><span>予算 ${yen(budget)}</span><span>${left >= 0 ? `残り <b class="num">${yen(left)}</b>` : `<b class="expense num">${yen(-left)} オーバー</b>`}</span></div>
-    </div>`;
-  })() : '';
+  const left = budget - tot.expense;
+  const budgetHtml = budget ? `<div class="budget ${left < 0 ? 'over' : ''}">
+      <div class="bar"><span style="width:${Math.min(100, (tot.expense / budget) * 100)}%"></span></div>
+      <div class="budget-meta"><span></span><span>${left >= 0 ? `予算残り <b class="num">${yen(left)}</b>` : `<b class="expense num">予算を${yen(-left)}超過</b>`}</span></div>
+    </div>` : '';
 
   return `
   <section class="card summary">
-    <div class="label">今月の収支</div>
     <div class="big num ${tot.net < 0 ? 'expense' : ''}">${signed(tot.net)}</div>
     <div class="row">
       <div class="pill"><span class="label">収入</span><b class="num income">${yen(tot.income)}</b></div>
@@ -257,27 +248,27 @@ function homeView() {
 
   <section class="card">
     <div class="card-head">
-      <h2>今月の支払い ${unpaid.length ? `<span class="badge warn">残り${unpaid.length}件 ${yen(unpaidSum)}</span>` : bills.length ? '<span class="badge ok">すべて完了</span>' : ''}</h2>
-      <button class="link" data-act="bills">管理</button>
+      <h2>支払い</h2>
+      ${unpaid.length ? `<span class="head-val num">残り ${yen(unpaidSum)}</span>` : bills.length ? '<span class="head-val">完了</span>' : ''}
     </div>
-    ${bills.length ? `<div class="rows">${shown.map((b) => billRow(b)).join('')}</div>
-      ${bills.length > shown.length ? `<button class="link" data-goto="cal" style="width:100%">カレンダーですべて見る（${bills.length}件）</button>` : ''}`
-      : `<div class="empty">家賃・サブスクなど毎月の支払いを登録すると<br>期日前にお知らせします<br><button class="btn sm" data-act="new-bill">＋ 支払いを登録</button></div>`}
+    ${bills.length ? `<div class="rows">${shown.map(billRow).join('')}</div>
+      ${bills.length > shown.length ? `<button class="link more" data-goto="cal">ほか${bills.length - shown.length}件</button>` : ''}`
+      : '<div class="empty"><button class="btn sm" data-act="new-bill">＋ 支払いを登録</button></div>'}
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>財布の残高 <b class="num" style="color:var(--text)">${yen(totalBal)}</b></h2><button class="link" data-goto="wallet">詳細</button></div>
+    <div class="card-head"><h2>財布</h2><span class="head-val num">${yen(totalBal)}</span></div>
     <div class="wallet-strip">
-      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="wchip" data-edit-wallet="${w.id}"><span class="n">${w.icon} ${esc(w.name)}</span><b class="num ${b < 0 ? 'expense' : ''}">${yen(b)}</b></button>`; }).join('')}
+      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="wchip" data-edit-wallet="${w.id}"><span class="n">${esc(w.name)}</span><b class="num ${b < 0 ? 'expense' : ''}">${yen(b)}</b></button>`; }).join('')}
     </div>
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>支出の内訳</h2><button class="link" data-goto="list">履歴</button></div>
+    <div class="card-head"><h2>内訳</h2></div>
     ${top.length ? `
-      <div class="bar cat-bar">${top.map(([id, v]) => `<span style="width:${(v / tot.expense) * 100}%;background:${id === '__rest' ? '#cbd5e1' : catOf('expense', id).color}"></span>`).join('')}</div>
-      <div class="legend">${top.map(([id, v]) => { const c = id === '__rest' ? { name: 'その他', color: '#cbd5e1', icon: '' } : catOf('expense', id); return `<div><i style="background:${c.color}"></i><span>${c.icon} ${c.name}</span><b class="num">${yen(v)}</b></div>`; }).join('')}</div>`
-      : '<div class="empty">まだ支出の記録がありません<br>下の「＋」から記録できます</div>'}
+      <div class="bar cat-bar">${top.map(([id, v]) => `<span style="width:${(v / tot.expense) * 100}%;background:${id === '__rest' ? '#c9c4b8' : catOf('expense', id).color}"></span>`).join('')}</div>
+      <div class="legend">${top.map(([id, v]) => { const c = id === '__rest' ? { name: 'その他', color: '#c9c4b8' } : catOf('expense', id); return `<div><i style="background:${c.color}"></i><span>${c.name}</span><b class="num">${yen(v)}</b></div>`; }).join('')}</div>`
+      : '<div class="empty">まだ支出の記録がありません</div>'}
   </section>`;
 }
 
@@ -323,20 +314,20 @@ function calView() {
       ${WD.map((w, i) => `<div class="cal-wd ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</div>`).join('')}
       ${cells}
     </div>
-    <div class="cal-legend"><span><i></i>支払い予定</span><span><i class="late"></i>期限超過</span><span><i class="paid"></i>支払済</span></div>
+    <div class="cal-legend"><span><i></i>予定</span><span><i class="late"></i>超過</span><span><i class="paid"></i>済</span></div>
   </section>
 
   <section class="card">
     <div class="card-head">
-      <h2>${sel.getMonth() + 1}月${sel.getDate()}日(${WD[sel.getDay()]})</h2>
-      <button class="link" data-act="add-on-day">＋ この日に記録</button>
+      <h2>${sel.getMonth() + 1}/${sel.getDate()}(${WD[sel.getDay()]})</h2>
+      <button class="link" data-act="add-on-day">＋ 記録</button>
     </div>
-    ${selBills.length || selTxs.length ? `<div class="rows">${selBills.map((b) => billRow(b)).join('')}${selTxs.map(txRow).join('')}</div>` : '<div class="empty">予定・記録はありません</div>'}
+    ${selBills.length || selTxs.length ? `<div class="rows">${selBills.map(billRow).join('')}${selTxs.map(txRow).join('')}</div>` : '<div class="empty">なし</div>'}
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>毎月の支払い（${bills.length}件）</h2><button class="link" data-act="new-bill">＋ 追加</button></div>
-    ${bills.length ? `<div class="rows">${bills.map((b) => billRow(b)).join('')}</div>` : '<div class="empty">登録された定期支払いはありません</div>'}
+    <div class="card-head"><h2>毎月の支払い</h2><button class="link" data-act="new-bill">＋ 追加</button></div>
+    ${bills.length ? `<div class="rows">${bills.map(billRow).join('')}</div>` : '<div class="empty">なし</div>'}
   </section>`;
 }
 
@@ -348,65 +339,61 @@ function listView() {
     .sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1));
   const groups = {};
   for (const t of txs) (groups[t.date] ||= []).push(t);
-  const tot = totals(y, m);
 
   return `
   <div class="seg" data-filter>
     ${[['all', 'すべて'], ['expense', '支出'], ['income', '収入'], ['transfer', '振替']].map(([v, l]) => `<button data-v="${v}" class="${f === v ? 'on' : ''}">${l}</button>`).join('')}
   </div>
-  <section class="card summary" style="padding:10px 14px">
-    <div class="row" style="margin:0">
-      <div><span class="label">収入</span> <b class="num income">${yen(tot.income)}</b></div>
-      <div><span class="label">支出</span> <b class="num expense">${yen(tot.expense)}</b></div>
-    </div>
-  </section>
   ${txs.length ? Object.entries(groups).map(([d, list]) => {
     const dt = parseYmd(d);
     const net = list.reduce((s, t) => s + (t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0), 0);
     return `<div class="day-head"><span>${dt.getMonth() + 1}/${dt.getDate()}(${WD[dt.getDay()]})</span><span class="num">${net ? signed(net) : ''}</span></div>
-      <section class="card" style="padding:4px 16px"><div class="rows">${list.map(txRow).join('')}</div></section>`;
-  }).join('') : '<section class="card"><div class="empty">この月の記録はありません</div></section>'}`;
+      <section class="card" style="padding:2px 16px"><div class="rows">${list.map(txRow).join('')}</div></section>`;
+  }).join('') : '<section class="card"><div class="empty">記録なし</div></section>'}`;
 }
 
 function walletView() {
   const total = S.wallets.reduce((s, w) => s + balance(w.id), 0);
-  const notifySupported = 'Notification' in window;
-  const perm = notifySupported ? Notification.permission : 'unsupported';
+  const perm = 'Notification' in window ? Notification.permission : 'unsupported';
+  const note = perm === 'denied' ? 'ブラウザでブロック中' : perm === 'unsupported' ? 'この端末は非対応' : '';
   return `
   <section class="card summary">
-    <div class="label">総資産</div>
     <div class="big num ${total < 0 ? 'expense' : ''}">${yen(total)}</div>
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>財布・口座</h2><button class="link" data-act="new-wallet">＋ 追加</button></div>
+    <div class="card-head"><h2>財布</h2><button class="link" data-act="new-wallet">＋ 追加</button></div>
     <div class="rows">
-      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="row-item" data-edit-wallet="${w.id}"><div class="ic">${w.icon}</div><div class="row-main"><div class="t">${esc(w.name)}</div><div class="s">初期残高 ${yen(Number(w.initial) || 0)}</div></div><div class="amt num ${b < 0 ? 'expense' : ''}">${yen(b)}</div></button>`; }).join('')}
+      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="row-item" data-edit-wallet="${w.id}">${walletMark(w)}<div class="row-main"><div class="t"><span>${esc(w.name)}</span></div></div><div class="amt num ${b < 0 ? 'expense' : ''}">${yen(b)}</div></button>`; }).join('')}
     </div>
-    <button class="btn ghost block sm" data-act="transfer" style="margin-top:8px">🔄 財布間で移動（振替）</button>
+    <button class="btn ghost block sm" data-act="transfer" style="margin-top:8px">振替</button>
   </section>
 
   <section class="card">
     <div class="card-head"><h2>設定</h2></div>
     <div class="set-row">
-      <div class="row-main"><div class="t">支払いの通知</div><div class="s">${perm === 'denied' ? 'ブラウザで通知がブロックされています' : perm === 'unsupported' ? 'この端末は通知に未対応です。カレンダー登録をお使いください' : 'アプリを開いた時に期日が近い支払いをお知らせ'}</div></div>
-      <label class="switch"><input type="checkbox" id="notifyToggle" ${S.settings.notify && perm === 'granted' ? 'checked' : ''} ${perm === 'unsupported' || perm === 'denied' ? 'disabled' : ''}><span></span></label>
+      <div class="row-main"><div class="t">通知</div>${note ? `<div class="s">${note}</div>` : ''}</div>
+      <label class="switch"><input type="checkbox" id="notifyToggle" ${S.settings.notify && perm === 'granted' ? 'checked' : ''} ${note ? 'disabled' : ''}><span></span></label>
     </div>
     <div class="set-row">
-      <div class="row-main"><div class="t">スマホのカレンダーに登録</div><div class="s">毎月の支払いを通知付きの予定として書き出し（確実に通知したい場合におすすめ）</div></div>
+      <div class="row-main"><div class="t">カレンダーに登録</div></div>
       <button class="btn sm" data-act="ics">書き出し</button>
     </div>
     <div class="set-row">
-      <div class="row-main"><div class="t">月の予算</div><div class="s">${S.settings.budget ? yen(S.settings.budget) : '未設定'}</div></div>
-      <button class="btn ghost sm" data-act="budget">変更</button>
+      <div class="row-main"><div class="t">月の予算</div></div>
+      <button class="btn ghost sm num" data-act="budget">${S.settings.budget ? yen(S.settings.budget) : '設定'}</button>
     </div>
     <div class="set-row">
-      <div class="row-main"><div class="t">バックアップ</div><div class="s">データはこの端末内だけに保存されています</div></div>
+      <div class="row-main"><div class="t">CSV書き出し</div></div>
+      <button class="btn ghost sm" data-act="csv">CSV</button>
+    </div>
+    <div class="set-row">
+      <div class="row-main"><div class="t">バックアップ</div></div>
       <button class="btn ghost sm" data-act="export">保存</button>
       <button class="btn ghost sm" data-act="import">復元</button>
     </div>
     <div class="set-row">
-      <div class="row-main"><div class="t">すべてのデータを削除</div></div>
+      <div class="row-main"><div class="t">全データ削除</div></div>
       <button class="btn danger sm" data-act="reset">削除</button>
     </div>
   </section>`;
@@ -432,9 +419,9 @@ function closeSheet() {
 sheet.addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeSheet(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
 
-const walletOptions = (sel) => S.wallets.map((w) => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${w.icon} ${esc(w.name)}</option>`).join('');
+const walletOptions = (sel) => S.wallets.map((w) => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
 const catGrid = (type, sel) => `<div class="cat-grid">${CATS[type].map((c) => `
-  <label><input type="radio" name="category" value="${c.id}" ${c.id === sel ? 'checked' : ''}><span class="c"><b>${c.icon}</b>${c.name}</span></label>`).join('')}</div>`;
+  <label><input type="radio" name="category" value="${c.id}" ${c.id === sel ? 'checked' : ''}><span class="c"><b style="--c:${c.color}">${c.icon}</b>${c.name}</span></label>`).join('')}</div>`;
 const parseAmount = (v) => Math.round(Number(String(v).replace(/[^\d.]/g, '')) || 0);
 
 function txSheet(tx, preset = {}) {
@@ -545,32 +532,11 @@ function billSheet(bill) {
   });
 }
 
-function billsListSheet() {
-  const items = monthBills(UI.y, UI.m);
-  const sum = items.reduce((s, i) => s + i.bill.amount, 0);
-  openSheet(`
-    <h3>毎月の支払い <span class="muted num" style="font-size:14px">合計 ${yen(sum)}/月</span></h3>
-    <section class="card" style="padding:4px 16px">
-      ${items.length ? `<div class="rows">${items.map((i) => `
-        <button class="row-item" data-edit-bill="${i.bill.id}">
-          <div class="ic">${catOf('expense', i.bill.category).icon}</div>
-          <div class="row-main"><div class="t">${esc(i.bill.name)}</div><div class="s">毎月${i.bill.day === 31 ? '月末' : i.bill.day + '日'} ・ ${NOTIFY_OPTS.find(([v]) => v === i.bill.notifyDays)?.[1] || ''}に通知</div></div>
-          <div class="amt num">${yen(i.bill.amount)}</div>
-        </button>`).join('')}</div>` : '<div class="empty">まだ登録がありません</div>'}
-    </section>
-    <div class="btn-row" style="margin-top:12px">
-      <button class="btn" data-act="new-bill">＋ 支払いを登録</button>
-    </div>`);
-}
-
 function walletSheet(w) {
-  const x = w || { name: '', icon: '👛', initial: 0 };
+  const x = w || { name: '', initial: 0 };
   openSheet(`
     <form class="form" id="wForm">
       <h3>${w ? '財布を編集' : '財布・口座を追加'}</h3>
-      <div class="field"><span class="lbl">アイコン</span>
-        <div class="cat-grid" style="grid-template-columns:repeat(8,1fr)">${WALLET_ICONS.map((i) => `<label><input type="radio" name="icon" value="${i}" ${i === x.icon ? 'checked' : ''}><span class="c"><b>${i}</b></span></label>`).join('')}</div>
-      </div>
       <div class="field"><label>名前</label><input class="input" name="name" value="${esc(x.name)}" placeholder="例：PayPay、楽天銀行" required></div>
       <div class="field"><label>初期残高（現在の残高を入力）</label><input class="input num" name="initial" inputmode="numeric" value="${Number(x.initial) || ''}" placeholder="0"></div>
       ${w ? `<div class="muted" style="font-size:12px">現在の残高：${yen(balance(w.id))}</div>` : ''}
@@ -582,7 +548,7 @@ function walletSheet(w) {
       e.preventDefault();
       const fd = new FormData(f);
       const raw = String(fd.get('initial')).replace(/[^\d-]/g, '');
-      const v = { name: String(fd.get('name')).trim(), icon: fd.get('icon') || '👛', initial: Number(raw) || 0 };
+      const v = { name: String(fd.get('name')).trim(), initial: Number(raw) || 0 };
       if (!v.name) return;
       if (w) Object.assign(w, v); else S.wallets.push({ id: uid(), ...v });
       save(); closeSheet(); render();
@@ -630,7 +596,7 @@ async function enableNotify() {
 }
 
 async function notify(title, body) {
-  const opts = { body, icon: 'icons/icon.svg', badge: 'icons/icon.svg', tag: 'osaifu-due' };
+  const opts = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'osaifu-due' };
   try {
     const reg = await navigator.serviceWorker?.getRegistration();
     if (reg) { await reg.showNotification(title, opts); return; }
@@ -675,7 +641,7 @@ function exportIcs() {
     lines.push(
       'BEGIN:VEVENT', `UID:${b.id}@osaifu`, `DTSTAMP:${stamp}`,
       `DTSTART;VALUE=DATE:${ds}`, `DTEND;VALUE=DATE:${de}`, rule,
-      `SUMMARY:${icsEsc(`💴 ${b.name} ${yen(b.amount)}`)}`,
+      `SUMMARY:${icsEsc(`${b.name} ${yen(b.amount)}`)}`,
       `DESCRIPTION:${icsEsc(`支払い元：${walletOf(b.walletId)?.name || ''}`)}`,
       'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEsc(`${b.name}の支払い`)}`, `TRIGGER:${trigger}`, 'END:VALARM',
       'END:VEVENT',
@@ -684,6 +650,24 @@ function exportIcs() {
   lines.push('END:VCALENDAR');
   download('osaifu-payments.ics', lines.join('\r\n'), 'text/calendar');
   toast('カレンダーファイルを書き出しました。開いて追加してください');
+}
+
+/* ---------- CSV export ---------- */
+function exportCsv() {
+  if (!S.txs.length) { toast('書き出す記録がありません'); return; }
+  const cell = (v) => { const t = String(v ?? ''); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  const TYPE = { expense: '支出', income: '収入', transfer: '振替' };
+  const rows = [['日付', '種類', 'カテゴリ', '金額', '財布', '移動先', 'メモ', '定期支払い']];
+  for (const t of [...S.txs].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))) {
+    rows.push([
+      t.date, TYPE[t.type] || t.type, t.type === 'transfer' ? '' : catOf(t.type, t.category).name, t.amount,
+      walletOf(t.walletId)?.name || '', t.type === 'transfer' ? walletOf(t.toWalletId)?.name || '' : '',
+      t.memo || '', t.billId ? S.bills.find((b) => b.id === t.billId)?.name || '' : '',
+    ]);
+  }
+  // 先頭のBOMでExcelでも文字化けしない
+  download(`osaifu-${todayStr()}.csv`, '\uFEFF' + rows.map((r) => r.map(cell).join(',')).join('\r\n'), 'text/csv');
+  toast(`${S.txs.length}件をCSVで書き出しました`);
 }
 
 /* ---------- backup ---------- */
@@ -728,7 +712,7 @@ function shiftMonth(delta) {
 }
 $('#prevMonth').onclick = () => shiftMonth(-1);
 $('#nextMonth').onclick = () => shiftMonth(1);
-$$('.tab').forEach((b) => (b.onclick = () => { UI.tab = b.dataset.tab; render(); window.scrollTo(0, 0); }));
+$$('.tab').forEach((b) => (b.onclick = () => { UI.tab = b.dataset.tab; render(); view.scrollTop = 0; }));
 $('#fab').onclick = () => {
   const inView = UI.tab === 'cal' ? UI.sel : todayStr().startsWith(ym(UI.y, UI.m)) ? todayStr() : ymd(new Date(UI.y, UI.m, 1));
   txSheet(null, { date: inView });
@@ -756,17 +740,17 @@ document.addEventListener('click', (e) => {
   if (ds.editBill) return billSheet(S.bills.find((b) => b.id === ds.editBill));
   if (ds.editTx) return txSheet(S.txs.find((t) => t.id === ds.editTx));
   if (ds.editWallet) return walletSheet(walletOf(ds.editWallet));
-  if (ds.goto) { UI.tab = ds.goto; render(); window.scrollTo(0, 0); return; }
+  if (ds.goto) { UI.tab = ds.goto; render(); view.scrollTop = 0; return; }
   if (ds.day) { UI.sel = ds.day; render(); return; }
   if (el.parentElement?.dataset.filter !== undefined && ds.v) { UI.filter = ds.v; render(); return; }
   switch (ds.act) {
-    case 'bills': return billsListSheet();
     case 'new-bill': return billSheet(null);
     case 'new-wallet': return walletSheet(null);
     case 'transfer': return txSheet(null, { type: 'transfer' });
     case 'add-on-day': return txSheet(null, { date: UI.sel });
     case 'budget': return budgetSheet();
     case 'ics': return exportIcs();
+    case 'csv': return exportCsv();
     case 'export': return download(`osaifu-backup-${todayStr()}.json`, JSON.stringify(S, null, 2), 'application/json');
     case 'import': return importJson();
     case 'reset':
