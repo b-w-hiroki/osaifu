@@ -27,7 +27,7 @@
 
 1. [Firebase コンソール](https://console.firebase.google.com/)でプロジェクトを作成（無料の Spark プランで可）
 2. 「Authentication」→「始める」→ ログイン方法で **Google** を有効化
-3. 「Authentication」→「設定」→「承認済みドメイン」に公開先（例：`b-w-hiroki.github.io`）を追加
+3. 「Authentication」→「設定」→「承認済みドメイン」に公開先（`osaifu.birdman-studio.com`）を追加
 4. 「Firestore Database」→「データベースを作成」（本番環境モード）→「ルール」に [`firestore.rules`](firestore.rules) の内容を貼り付けて公開
 5. 「プロジェクトの設定」→「マイアプリ」でウェブアプリを追加し、表示された `firebaseConfig` を [`config.js`](config.js) の `window.OSAIFU_FIREBASE` に貼り付けてコミット
 6. アプリの「財布」→「クラウド同期」→「Googleでログイン」
@@ -36,7 +36,16 @@
 
 ## 使い方
 
-ビルド不要の静的ファイルです。GitHub Pages などで公開し、スマホで開いて「ホーム画面に追加」するとアプリとして使えます。
+ビルド不要の静的ファイルです。GitHub Pages で `https://osaifu.birdman-studio.com/` に公開し、スマホで開いて「ホーム画面に追加」するとアプリとして使えます。
+
+### 公開設定（GitHub Pages とドメイン）
+
+1. Settings → Pages → Source を「Deploy from a branch」、Branch を `main` / `/ (root)` にする
+2. 同じ画面の Custom domain に `osaifu.birdman-studio.com` を入力して Save（リポジトリ直下の `CNAME` と同じ値）
+3. DNS に `osaifu` の CNAME（値 `b-w-hiroki.github.io`）を登録する
+4. DNSの確認が済んだら「Enforce HTTPS」にチェックを入れる
+
+データはURLごとにブラウザに保存されます。公開URLを変えると以前のデータは引き継がれないので、変更時は「バックアップ」で保存・復元してください。
 
 ```sh
 python3 -m http.server 8000   # http://localhost:8000
