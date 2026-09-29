@@ -227,50 +227,181 @@ test('同期：3方向マージは片方の変更を採用し、両方変更な�
   expect(r.del).toEqual(['f']);
 });
 
-test.describe('クラウド同期（Firebaseを代替して検証）', () => {
-  test.beforeEach(async ({ page }) => {
+test.describe('ログインとクラウド同期（Firebaseを代替して検証）', () => {
+  const remoteTx = { kind: 'tx', data: { id: 'remote1', type: 'expense', amount: 777, date: '2026-09-15', category: 'food', walletId: 'cash', memo: '別端末' } };
+
+  // opts.require: ログイン必須 / opts.user: すでにログイン済み / opts.accounts: 登録済みのアカウント
+  async function setup(page, opts = {}) {
     const fake = fs.readFileSync(new URL('./fake-firebase.js', import.meta.url), 'utf8');
     await page.route('https://www.gstatic.com/firebasejs/**', (route) => route.fulfill({ body: fake, contentType: 'text/javascript', headers: { 'access-control-allow-origin': '*' } }));
-    await page.route('**/config.js', (route) => route.fulfill({ body: "window.OSAIFU_FIREBASE = { apiKey: 'test', projectId: 'test' };", contentType: 'text/javascript' }));
-    // クラウドには別端末で記録した支出が1件ある
-    await page.addInitScript(() => {
-      globalThis.__fake = { docs: new Map([['t_remote1', { kind: 'tx', data: { id: 'remote1', type: 'expense', amount: 777, date: '2026-09-15', category: 'food', walletId: 'cash', memo: '別端末' } }]]), listeners: [], authCbs: [], writes: [], user: null };
-    });
+    await page.route('**/config.js', (route) => route.fulfill({
+      body: `window.OSAIFU_FIREBASE = { apiKey: 'test', projectId: 'test' }; window.OSAIFU_REQUIRE_LOGIN = ${!!opts.require};`,
+      contentType: 'text/javascript',
+    }));
+    await page.addInitScript((o) => {
+      if (globalThis.__fake) return; // 再読み込み時はクラウドの内容を引き継ぐ（addInitScript は毎回走るため）
+      globalThis.__fake = {
+        docs: new Map([['t_remote1', o.remote]]), listeners: [], authCbs: [], writes: [], resets: [],
+        user: o.user || null, accounts: o.accounts || {},
+      };
+    }, { remote: remoteTx.data && remoteTx, user: opts.user, accounts: opts.accounts });
+  }
+  const gate = (page) => page.locator('#login');
+
+  test('未ログインの初回はログイン画面が出て、「ログインせずに使う」で閉じられる', async ({ page }) => {
+    await setup(page);
+    await page.goto('/');
+    await expect(gate(page)).toBeVisible();
+    await expect(gate(page).getByText('Googleでログイン')).toBeVisible();
+    await expect(gate(page).locator('input[name=email]')).toBeVisible();
+    await gate(page).getByText('ログインせずに使う').click();
+    await expect(gate(page)).toBeHidden();
+    await expect(page.locator('#title')).toHaveText('2026年9月');
+    // 次回以降は出ない。設定画面からはいつでもログインできる
+    await page.reload();
+    await expect(gate(page)).toBeHidden();
+    await page.click('[data-tab=wallet]');
+    await page.locator('.set-row', { hasText: 'ログイン' }).getByRole('button', { name: 'ログイン' }).click();
+    await expect(gate(page)).toBeVisible();
+    await gate(page).getByText('戻る').click();
+    await expect(gate(page)).toBeHidden();
   });
 
-  test('ログインで双方の記録がそろい、以後の変更が往復する', async ({ page }) => {
+  test('ログイン必須の設定では「ログインせずに使う」が出ない', async ({ page }) => {
+    await setup(page, { require: true });
+    await page.goto('/');
+    await expect(gate(page)).toBeVisible();
+    await expect(gate(page).getByText('ログインせずに使う')).toHaveCount(0);
+    await page.reload();
+    await expect(gate(page)).toBeVisible();
+  });
+
+  test('メールで新規登録するとログインでき、端末とクラウドの記録がそろう', async ({ page }) => {
+    await setup(page);
+    await page.goto('/');
     await seed(page, { ...base, txs: [{ id: 'local1', type: 'expense', amount: 500, date: '2026-09-20', category: 'fun', walletId: 'cash', memo: 'この端末' }] });
+    await gate(page).getByRole('button', { name: '新規登録' }).first().click();
+    await gate(page).locator('input[name=email]').fill('me@example.com');
+    await gate(page).locator('input[name=password]').fill('secret123');
+    await gate(page).locator('form button[type=submit]').click();
+    await expect(gate(page)).toBeHidden();
+
     await page.click('[data-tab=wallet]');
-    await page.getByText('Googleでログイン').click();
-    await expect(page.locator('.set-row', { hasText: 'クラウド同期' })).toContainText('同期済み');
-    await expect(page.locator('.set-row', { hasText: 'クラウド同期' })).toContainText('test@example.com');
+    const row = page.locator('.set-row', { hasText: 'アカウント' });
+    await expect(row).toContainText('me@example.com');
+    await expect(row).toContainText('同期済み');
+    expect((await state(page)).txs.map((t) => t.id).sort()).toEqual(['local1', 'remote1']);
+    expect(await page.evaluate(() => [...__fake.docs.keys()].sort())).toEqual(['_settings', 't_local1', 't_remote1', 'w_bank', 'w_cash']);
 
-    // クラウド → 端末
-    let s = await state(page);
-    expect(s.txs.map((t) => t.id).sort()).toEqual(['local1', 'remote1']);
-    // 端末 → クラウド（財布・設定・端末の記録）
-    const remoteIds = await page.evaluate(() => [...__fake.docs.keys()].sort());
-    expect(remoteIds).toEqual(['_settings', 't_local1', 't_remote1', 'w_bank', 'w_cash']);
-
-    // 別端末でクラウドの記録が変更された
-    await page.evaluate(() => {
-      const d = __fake.docs.get('t_remote1'); d.data.amount = 800; __fake.docs.set('t_remote1', d); __fake.emit();
-    });
+    // クラウド側の変更が届く
+    await page.evaluate(() => { const d = __fake.docs.get('t_remote1'); d.data.amount = 800; __fake.docs.set('t_remote1', d); __fake.emit(); });
     await page.click('[data-tab=list]');
     await expect(page.locator('[data-edit-tx=remote1]')).toContainText('¥800');
+  });
 
-    // 端末で削除 → クラウドからも消える
-    page.once('dialog', (d) => d.accept());
-    await page.click('[data-edit-tx=local1]');
-    await page.click('#txForm [data-del]');
-    await expect.poll(() => page.evaluate(() => __fake.docs.has('t_local1'))).toBe(false);
-
-    // ログアウトしても端末のデータは残る
+  test('Googleでログインできる', async ({ page }) => {
+    await setup(page);
+    await page.goto('/');
+    await gate(page).getByText('Googleでログイン').click();
+    await expect(gate(page)).toBeHidden();
     await page.click('[data-tab=wallet]');
-    await page.getByText('ログアウト').click();
-    await expect(page.getByText('Googleでログイン')).toBeVisible();
-    s = await state(page);
-    expect(s.txs.map((t) => t.id)).toEqual(['remote1']);
+    await expect(page.locator('.set-row', { hasText: 'アカウント' })).toContainText('test@example.com');
+  });
+
+  test('ログインの失敗はわかりやすい日本語で出る', async ({ page }) => {
+    await setup(page, { accounts: { 'a@example.com': { pw: 'correct-pass', uid: 'ua' } } });
+    await page.goto('/');
+    const msg = gate(page).locator('.login-msg');
+    const submit = gate(page).locator('form button[type=submit]');
+    await gate(page).locator('input[name=email]').fill('a@example.com');
+    await gate(page).locator('input[name=password]').fill('wrong');
+    await submit.click();
+    await expect(msg).toHaveText('メールアドレスまたはパスワードが違います');
+    await expect(gate(page)).toBeVisible();
+    // 入力したメールアドレスは残る
+    await expect(gate(page).locator('input[name=email]')).toHaveValue('a@example.com');
+
+    await gate(page).getByRole('button', { name: '新規登録' }).first().click();
+    await gate(page).locator('input[name=email]').fill('new@example.com');
+    await gate(page).locator('input[name=password]').fill('12345');
+    await submit.click();
+    await expect(msg).toHaveText('パスワードは6文字以上にしてください');
+    await gate(page).locator('input[name=email]').fill('a@example.com');
+    await gate(page).locator('input[name=password]').fill('123456');
+    await submit.click();
+    await expect(msg).toContainText('登録済みです');
+    await gate(page).locator('input[name=email]').fill('');
+    await submit.click();
+    await expect(msg).toHaveText('メールアドレスとパスワードを入力してください');
+  });
+
+  test('パスワード再設定のメールを送れる', async ({ page }) => {
+    await setup(page);
+    await page.goto('/');
+    await gate(page).getByText('パスワードを忘れた').click();
+    await expect(gate(page).locator('.login-msg')).toHaveText('メールアドレスを入力してください');
+    await gate(page).locator('input[name=email]').fill('me@example.com');
+    await gate(page).getByText('パスワードを忘れた').click();
+    await expect(gate(page).locator('.login-msg')).toHaveText('再設定用のメールを送信しました');
+    expect(await page.evaluate(() => __fake.resets)).toEqual(['me@example.com']);
+    await expect(gate(page)).toBeVisible();
+  });
+
+  test('ログアウトで端末のデータを片付け、再ログインでクラウドから戻る', async ({ page }) => {
+    await setup(page, { accounts: { 'a@example.com': { pw: 'correct-pass', uid: 'ua' } } });
+    await page.goto('/');
+    await gate(page).locator('input[name=email]').fill('a@example.com');
+    await gate(page).locator('input[name=password]').fill('correct-pass');
+    await gate(page).locator('form button[type=submit]').click();
+    await expect(gate(page)).toBeHidden();
+    await expect.poll(async () => (await state(page)).txs.length).toBe(1);
+
+    await page.click('[data-tab=wallet]');
+    page.once('dialog', (d) => d.accept());
+    await page.getByRole('button', { name: 'ログアウト' }).click();
+    await expect(gate(page)).toBeVisible();
+    expect((await state(page)).txs).toEqual([]);
+    expect(await page.evaluate(() => __fake.docs.has('t_remote1'))).toBe(true); // クラウドには残る
+
+    await gate(page).locator('input[name=email]').fill('a@example.com');
+    await gate(page).locator('input[name=password]').fill('correct-pass');
+    await gate(page).locator('form button[type=submit]').click();
+    await expect(gate(page)).toBeHidden();
+    await expect.poll(async () => (await state(page)).txs.map((t) => t.id)).toEqual(['remote1']);
+  });
+
+  test('別アカウントのデータが端末に残っていたら、確認してから切り替える', async ({ page }) => {
+    await setup(page, { accounts: { 'b@example.com': { pw: 'bbbbbb', uid: 'ub' } } });
+    await page.goto('/');
+    await seed(page, { ...base, txs: [{ id: 'mine', type: 'expense', amount: 1, date: '2026-09-01', category: 'food', walletId: 'cash', memo: 'Aさんの記録' }] });
+    await page.evaluate(() => localStorage.setItem('osaifu:sync-uid', JSON.stringify('ua')));
+
+    // 断ると、ログアウトして端末のデータはそのまま
+    page.once('dialog', (d) => d.dismiss());
+    await gate(page).locator('input[name=email]').fill('b@example.com');
+    await gate(page).locator('input[name=password]').fill('bbbbbb');
+    await gate(page).locator('form button[type=submit]').click();
+    await expect(gate(page)).toBeVisible();
+    await expect(gate(page).locator('.login-msg')).toContainText('取りやめました');
+    expect((await state(page)).txs.map((t) => t.id)).toEqual(['mine']);
+    expect(await page.evaluate(() => __fake.docs.has('t_mine'))).toBe(false); // 他人のデータをBに上げない
+
+    // 受け入れると、Bさんのデータに切り替わる
+    page.once('dialog', (d) => d.accept());
+    await gate(page).locator('input[name=password]').fill('bbbbbb'); // パスワード欄は描き直しで空になる
+    await gate(page).locator('form button[type=submit]').click();
+    await expect(gate(page)).toBeHidden();
+    await expect.poll(async () => (await state(page)).txs.map((t) => t.id)).toEqual(['remote1']);
+    expect(await page.evaluate(() => __fake.docs.has('t_mine'))).toBe(false);
+  });
+
+  test('前回ログインした端末は、画面を開き直してもログイン画面を出さない', async ({ page }) => {
+    await setup(page, { user: { uid: 'u1', email: 'test@example.com' } });
+    await page.addInitScript(() => localStorage.setItem('osaifu:sync-on', 'true'));
+    await page.goto('/');
+    await expect(gate(page)).toBeHidden();
+    await page.click('[data-tab=wallet]');
+    await expect(page.locator('.set-row', { hasText: 'アカウント' })).toContainText('test@example.com');
   });
 });
 

@@ -15,13 +15,18 @@ const Sync = (() => {
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.2';
   const BASE_KEY = 'osaifu:sync-base';
   const ON_KEY = 'osaifu:sync-on';
+  const UID_KEY = 'osaifu:sync-uid'; // この端末のデータが属するアカウント
 
   let fb = null;
   let user = null;
   let unsub = null;
   let started = false;
   let ready = false; // 初回のクラウド内容を取り込み済み
-  let status = cfg ? 'signedOut' : 'disabled';
+  // authState: off=未設定 / unknown=前回ログイン済みで確認中 / in / out
+  let authState = !cfg ? 'off' : readJson(ON_KEY) ? 'unknown' : 'out';
+  let status = !cfg ? 'disabled' : authState === 'unknown' ? 'syncing' : 'signedOut';
+  let handlers = {};
+  let notice = ''; // ログインを取りやめた理由など、画面に一度だけ出す案内
   let base = readJson(BASE_KEY) || {};
 
   function readJson(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
@@ -99,7 +104,9 @@ const Sync = (() => {
     ]);
     const a = app.initializeApp(cfg);
     const db = fs.initializeFirestore(a, { localCache: fs.persistentLocalCache() });
-    fb = { auth, fs, db, au: auth.getAuth(a) };
+    const au = auth.getAuth(a);
+    au.languageCode = 'ja'; // パスワード再設定などのメールを日本語に
+    fb = { auth, fs, db, au };
     return fb;
   }
 
@@ -165,43 +172,100 @@ const Sync = (() => {
     write(local, pushIds, delIds).then(() => setStatus('synced')).catch(() => setStatus('error'));
   }
 
-  async function start() {
-    if (started) return;
-    started = true;
-    await loadSdk();
-    fb.auth.onAuthStateChanged(fb.au, (u) => {
-      user = u;
-      if (u) listen();
-      else { stop(); setStatus('signedOut'); }
-    });
-  }
-
-  async function signIn() {
-    try {
-      setStatus('syncing');
-      await loadSdk();
-      writeJson(ON_KEY, true);
-      await start();
-      const provider = new fb.auth.GoogleAuthProvider();
-      try {
-        await fb.auth.signInWithPopup(fb.au, provider);
-      } catch (e) {
-        if (e && /popup-blocked|operation-not-supported/.test(e.code || '')) await fb.auth.signInWithRedirect(fb.au, provider);
-        else throw e;
+  async function onUser(u) {
+    if (u) {
+      // 別アカウントのデータが端末に残っている場合は、混ざらないよう確認してから切り替える
+      const last = readJson(UID_KEY);
+      if (last && last !== u.uid) {
+        const ok = handlers.onSwitch ? handlers.onSwitch() : true;
+        if (!ok) {
+          notice = 'ログインを取りやめました。この端末には別のアカウントのデータが残っています';
+          await fb.auth.signOut(fb.au);
+          return;
+        }
+        base = {};
+        writeJson(BASE_KEY, base);
       }
-    } catch (e) {
-      setStatus(user ? 'error' : 'signedOut');
-      if (typeof toast === 'function') toast('ログインできませんでした');
+      writeJson(UID_KEY, u.uid);
+      user = u;
+      authState = 'in';
+      listen();
+    } else {
+      user = null;
+      authState = 'out';
+      stop();
+      setStatus('signedOut');
     }
   }
 
+  async function start() {
+    if (started) return;
+    started = true;
+    try {
+      await loadSdk();
+    } catch (e) {
+      started = false; // 通信できなかった時は次のログイン操作でやり直せるようにする
+      throw e;
+    }
+    fb.auth.onAuthStateChanged(fb.au, (u) => { onUser(u); });
+  }
+
+  /** Firebase のエラーコードを画面用の日本語にする（空文字は表示しない） */
+  function authMessage(e) {
+    const code = (e && e.code) || '';
+    if (/popup-closed-by-user|cancelled-popup-request|user-cancelled/.test(code)) return '';
+    if (/invalid-credential|wrong-password|user-not-found|invalid-login/.test(code)) return 'メールアドレスまたはパスワードが違います';
+    if (/email-already-in-use/.test(code)) return 'このメールアドレスは登録済みです。ログインしてください';
+    if (/weak-password/.test(code)) return 'パスワードは6文字以上にしてください';
+    if (/invalid-email|missing-email/.test(code)) return 'メールアドレスの形式が正しくありません';
+    if (/too-many-requests/.test(code)) return '試行回数が多すぎます。しばらくしてからやり直してください';
+    if (/network-request-failed/.test(code)) return '通信できません。ネットワークを確認してください';
+    if (/operation-not-allowed/.test(code)) return 'このログイン方法は有効になっていません（Firebase の設定を確認してください）';
+    if (/unauthorized-domain/.test(code)) return 'このドメインからのログインは許可されていません（Firebase の承認済みドメインを確認してください）';
+    return 'ログインできませんでした';
+  }
+
+  /**
+   * ログイン操作の共通処理。成功で { ok: true }、失敗で { ok: false, error }
+   * remember: 'before'＝リダイレクト方式に備えて先に記録 / 'after'＝成功後に記録 / false＝記録しない
+   */
+  async function run(fn, remember = 'after') {
+    try {
+      await loadSdk();
+      if (remember === 'before') writeJson(ON_KEY, true);
+      await start();
+      await fn();
+      if (remember === 'after') writeJson(ON_KEY, true);
+      return { ok: true };
+    } catch (e) {
+      if (!user) { authState = 'out'; setStatus('signedOut'); }
+      return { ok: false, error: authMessage(e) };
+    }
+  }
+
+  const signInGoogle = () => run(async () => {
+    const provider = new fb.auth.GoogleAuthProvider();
+    try {
+      await fb.auth.signInWithPopup(fb.au, provider);
+    } catch (e) {
+      if (e && /popup-blocked|operation-not-supported/.test(e.code || '')) await fb.auth.signInWithRedirect(fb.au, provider);
+      else throw e;
+    }
+  }, 'before');
+  const signInEmail = (email, password) => run(() => fb.auth.signInWithEmailAndPassword(fb.au, email, password));
+  const signUpEmail = (email, password) => run(() => fb.auth.createUserWithEmailAndPassword(fb.au, email, password));
+  const resetPassword = (email) => run(() => fb.auth.sendPasswordResetEmail(fb.au, email), false);
+
+  /** ログアウト。端末のデータは呼び出し側で片付ける（このアカウントの記録はクラウドに残る） */
   async function signOut() {
     writeJson(ON_KEY, false);
     stop();
     base = {};
     writeJson(BASE_KEY, base);
+    writeJson(UID_KEY, null);
     if (fb) await fb.auth.signOut(fb.au);
     user = null;
+    authState = 'out';
     setStatus('signedOut');
   }
 
@@ -213,8 +277,11 @@ const Sync = (() => {
   return {
     get enabled() { return !!cfg; },
     get status() { return status; },
+    get authState() { return authState; },
     get email() { return user?.email || ''; },
-    signIn, signOut, push,
+    setHandlers(h) { handlers = h; },
+    takeNotice() { const n = notice; notice = ''; return n; },
+    signInGoogle, signInEmail, signUpEmail, resetPassword, signOut, push,
     // テスト用
     merge, toRecords, applyRecords, canon,
   };

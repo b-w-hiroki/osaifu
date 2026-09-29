@@ -94,6 +94,7 @@ const UI = {
   sel: todayStr(),
   filter: 'all',
   group: 'date',
+  forceLogin: false,
 };
 
 /* ---------- domain ---------- */
@@ -302,7 +303,119 @@ function render() {
   $('#nextMonth').hidden = !showMonth;
   $$('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === UI.tab));
   view.innerHTML = { home: homeView, cal: calView, list: listView, wallet: walletView }[UI.tab]();
+  renderLogin();
 }
+
+/* ---------- login ---------- */
+const LOGIN_SKIP_KEY = 'osaifu:login-skipped';
+const LOGIN = { mode: 'login', busy: false, error: '', info: '' };
+const loginSkipped = () => { try { return localStorage.getItem(LOGIN_SKIP_KEY) === '1'; } catch (e) { return false; } };
+const setLoginSkipped = (on) => { try { if (on) localStorage.setItem(LOGIN_SKIP_KEY, '1'); else localStorage.removeItem(LOGIN_SKIP_KEY); } catch (e) { /* ignore */ } };
+const loginRequired = () => window.OSAIFU_REQUIRE_LOGIN === true;
+
+/** ログイン画面を出すか：Firebase設定済みで未ログイン、かつ（必須設定・設定画面から開いた・まだ「使わない」を選んでいない） */
+function needLogin() {
+  if (!Sync.enabled || Sync.authState !== 'out') return false;
+  return UI.forceLogin || loginRequired() || !loginSkipped();
+}
+
+function renderLogin() {
+  const el = $('#login');
+  const show = needLogin();
+  const was = !el.hidden;
+  el.hidden = !show;
+  if (show && !was) { LOGIN.error = ''; LOGIN.info = ''; paintLogin(); }
+  if (!show && was) el.innerHTML = '';
+  const n = Sync.takeNotice();
+  if (n && show) { LOGIN.error = n; LOGIN.busy = false; paintLogin(); }
+}
+
+/** 入力中の欄を消さないよう、メールアドレスだけ引き継いで描き直す */
+function paintLogin() {
+  const el = $('#login');
+  const email = $('input[name=email]', el)?.value || '';
+  const signup = LOGIN.mode === 'signup';
+  const canSkip = !loginRequired() || UI.forceLogin;
+  el.innerHTML = `
+  <div class="login-box">
+    <div class="login-brand"><img src="icons/icon.svg" alt="" width="56" height="56"><h2>おさいふ</h2></div>
+    <button class="btn ghost block" type="button" data-login="google" ${LOGIN.busy ? 'disabled' : ''}>Googleでログイン</button>
+    <div class="or"><span>または</span></div>
+    <div class="seg">${[['login', 'ログイン'], ['signup', '新規登録']].map(([v, l]) => `<button type="button" data-login="mode-${v}" class="${LOGIN.mode === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <form id="loginForm" class="form" novalidate>
+      <div class="field"><label for="loginEmail">メールアドレス</label><input class="input" id="loginEmail" type="email" name="email" autocomplete="email" inputmode="email" value="${esc(email)}"></div>
+      <div class="field"><label for="loginPass">パスワード${signup ? '（6文字以上）' : ''}</label><input class="input" id="loginPass" type="password" name="password" autocomplete="${signup ? 'new-password' : 'current-password'}"></div>
+      <div class="login-msg ${LOGIN.error ? 'err' : ''}" role="alert">${esc(LOGIN.error || LOGIN.info)}</div>
+      <button class="btn block" type="submit" ${LOGIN.busy ? 'disabled' : ''}>${signup ? '新規登録' : 'ログイン'}</button>
+    </form>
+    ${signup ? '' : '<button class="link" type="button" data-login="reset">パスワードを忘れた</button>'}
+    ${canSkip ? `<button class="link muted-link" type="button" data-login="skip">${UI.forceLogin ? '戻る' : 'ログインせずに使う'}</button>` : ''}
+  </div>`;
+}
+
+async function runLogin(fn) {
+  LOGIN.busy = true; LOGIN.error = ''; LOGIN.info = '';
+  paintLogin();
+  const r = await fn();
+  LOGIN.busy = false;
+  if (r.ok) {
+    setLoginSkipped(false);
+    UI.forceLogin = false;
+    render();
+    // 別アカウントのデータの確認で断った時などは画面が残るので、ボタンを押せる状態に戻す
+    if (!$('#login').hidden) paintLogin();
+    return r;
+  }
+  LOGIN.error = r.error;
+  paintLogin();
+  return r;
+}
+
+$('#login').addEventListener('click', async (e) => {
+  const act = e.target.closest('[data-login]')?.dataset.login;
+  if (!act) return;
+  if (act === 'google') return runLogin(() => Sync.signInGoogle());
+  if (act === 'mode-login' || act === 'mode-signup') { LOGIN.mode = act.slice(5); LOGIN.error = ''; LOGIN.info = ''; return paintLogin(); }
+  if (act === 'skip') { setLoginSkipped(true); UI.forceLogin = false; return render(); }
+  if (act === 'reset') {
+    const email = $('#loginForm input[name=email]').value.trim();
+    if (!email) { LOGIN.error = 'メールアドレスを入力してください'; return paintLogin(); }
+    const r = await runLogin(() => Sync.resetPassword(email));
+    if (r.ok) { LOGIN.info = '再設定用のメールを送信しました'; paintLogin(); }
+  }
+});
+$('#login').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const email = $('input[name=email]', e.target).value.trim();
+  const password = $('input[name=password]', e.target).value;
+  if (!email || !password) { LOGIN.error = 'メールアドレスとパスワードを入力してください'; LOGIN.info = ''; return paintLogin(); }
+  return runLogin(() => (LOGIN.mode === 'signup' ? Sync.signUpEmail(email, password) : Sync.signInEmail(email, password)));
+});
+
+/** ログアウト：この端末のデータも片付ける（アカウントの記録はクラウドに残り、次回ログインで戻る） */
+async function logout() {
+  const synced = Sync.status === 'synced';
+  const msg = synced
+    ? 'ログアウトします。この端末のデータは削除されます（クラウドの記録は、次回ログインで復元されます）。'
+    : '同期が終わっていない変更があります。ログアウトするとこの端末のデータが削除され、未同期の変更は失われます。ログアウトしますか？';
+  if (!confirm(msg)) return;
+  await Sync.signOut();
+  S = seed();
+  saveLocal();
+  UI.tab = 'home';
+  render();
+}
+
+// 別のアカウントのデータが端末に残っていた時（ログイン期限切れ後など）は、混ざらないよう確認する
+Sync.setHandlers({
+  onSwitch: () => {
+    const hasData = S.txs.length || S.bills.length;
+    if (hasData && !confirm('この端末には別のアカウントのデータが残っています。削除して、ログインしたアカウントのデータに切り替えますか？（キャンセルするとログアウトします）')) return false;
+    S = seed();
+    saveLocal();
+    return true;
+  },
+});
 
 function billRow(it) {
   const type = billType(it.bill);
@@ -512,10 +625,10 @@ function listView() {
 const SYNC_LABEL = { syncing: '同期中', synced: '同期済み', offline: 'オフライン', error: '同期エラー' };
 function syncRow() {
   if (!Sync.enabled) return '';
-  const on = Sync.status !== 'signedOut';
+  const on = Sync.authState === 'in' || Sync.authState === 'unknown';
   return `<div class="set-row">
-      <div class="row-main"><div class="t">クラウド同期</div>${on ? `<div class="s">${esc(Sync.email)} ${SYNC_LABEL[Sync.status] || ''}</div>` : ''}</div>
-      ${on ? '<button class="btn ghost sm" data-act="sync-out">ログアウト</button>' : '<button class="btn sm" data-act="sync-in">Googleでログイン</button>'}
+      <div class="row-main"><div class="t">${on ? 'アカウント' : 'ログイン'}</div>${on ? `<div class="s">${esc(Sync.email)} ${SYNC_LABEL[Sync.status] || ''}</div>` : ''}</div>
+      ${on ? '<button class="btn ghost sm" data-act="sync-out">ログアウト</button>' : '<button class="btn sm" data-act="sync-in">ログイン</button>'}
     </div>`;
 }
 
@@ -1113,8 +1226,8 @@ document.addEventListener('click', (e) => {
     case 'budget': return budgetSheet();
     case 'ics': return exportIcs();
     case 'csv': return exportCsv();
-    case 'sync-in': return Sync.signIn();
-    case 'sync-out': return Sync.signOut();
+    case 'sync-in': UI.forceLogin = true; return render();
+    case 'sync-out': return logout();
     case 'export': return download(`osaifu-backup-${todayStr()}.json`, JSON.stringify(S, null, 2), 'application/json');
     case 'import': return importJson();
     case 'reset':

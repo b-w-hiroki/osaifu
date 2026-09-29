@@ -341,3 +341,21 @@ button { cursor: pointer; }
 .seg.mini { margin-bottom: 4px; }
 .seg.mini button { padding: 5px 0; font-size: 13px; }
 .day-head.in-card { padding: 10px 0 2px; }
+
+/* ---------- login ---------- */
+.login {
+  position: fixed; inset: 0; z-index: 40; background: var(--bg);
+  overflow-y: auto; display: flex; padding: env(safe-area-inset-top) 20px env(safe-area-inset-bottom);
+}
+.login[hidden] { display: none; }
+.login-box { width: 100%; max-width: 380px; margin: auto; padding: 24px 0; display: grid; gap: 14px; }
+.login-brand { display: grid; justify-items: center; gap: 8px; margin-bottom: 8px; }
+.login-brand img { border-radius: 14px; }
+.login-brand h2 { margin: 0; font-size: 22px; letter-spacing: .04em; }
+.or { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.login-msg { min-height: 20px; font-size: 13px; color: var(--muted); }
+.login-msg.err { color: var(--expense); font-weight: 700; }
+.muted-link { color: var(--muted); }
+.login .link { justify-self: center; }
+.btn:disabled { opacity: .55; }
