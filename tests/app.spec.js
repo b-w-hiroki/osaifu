@@ -83,16 +83,16 @@ test('毎月の支払いを登録→支払済→取り消しできる', async ({
   await page.click('#billForm button[type=submit]');
 
   const row = page.locator('.row-item', { hasText: '家賃' }).first();
-  await expect(row).toContainText('あと2日');
+  await expect(row).toContainText('30日');
   await row.locator('[data-pay]').click();
-  await expect(row).toContainText('支払済');
+  await expect(row.locator('[data-pay]')).toHaveText('済');
   await expect(page.locator('.summary')).toContainText('¥80,000');
   let s = await state(page);
   expect(s.txs).toHaveLength(1);
   expect(s.txs[0]).toMatchObject({ amount: 80000, billMonth: '2026-09', date: '2026-09-28' });
 
   await page.locator('#toast button').click();
-  await expect(row).toContainText('あと2日');
+  await expect(row).toContainText('30日');
   s = await state(page);
   expect(s.txs).toHaveLength(0);
 });
@@ -158,4 +158,15 @@ test('バックアップを書き出して復元できる', async ({ page }) => 
   await chooser.setFiles({ name: 'b.json', mimeType: 'application/json', buffer: Buffer.from(json) });
   await expect(page.locator('#toast')).toContainText('復元しました');
   expect((await state(page)).txs[0].amount).toBe(999);
+});
+
+test('タブバーはスクロールしても画面下に固定される', async ({ page }) => {
+  await seed(page, { ...base, txs: Array.from({ length: 40 }, (_, i) => ({ id: 't' + i, type: 'expense', amount: 100, date: `2026-09-${String((i % 28) + 1).padStart(2, '0')}`, category: 'food', walletId: 'cash', memo: '' })) });
+  await page.click('[data-tab=list]');
+  const vh = page.viewportSize().height;
+  const before = await page.locator('.tabbar').boundingBox();
+  await page.locator('#view').evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  const after = await page.locator('.tabbar').boundingBox();
+  expect(Math.round(before.y + before.height)).toBe(vh);
+  expect(after.y).toBe(before.y);
 });

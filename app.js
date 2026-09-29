@@ -144,12 +144,12 @@ function monthBills(y, m) {
 }
 
 function dueLabel(it) {
-  if (it.status === 'paid') return '<span class="badge ok">支払済</span>';
+  if (it.status === 'paid') return '';
   if (it.diff < 0) return `<span class="badge danger">${-it.diff}日超過</span>`;
   if (it.diff === 0) return '<span class="badge danger">今日</span>';
   if (it.diff === 1) return '<span class="badge warn">明日</span>';
   if (it.status === 'soon') return `<span class="badge warn">あと${it.diff}日</span>`;
-  return `<span class="badge">あと${it.diff}日</span>`;
+  return `<span class="badge">${it.due.getDate()}日</span>`;
 }
 
 function togglePaid(billId, y, m) {
@@ -181,42 +181,33 @@ const view = $('#view');
 
 function render() {
   const showMonth = UI.tab !== 'wallet';
-  $('#title').textContent = showMonth ? `${UI.y}年${UI.m + 1}月` : '財布・設定';
+  $('#title').textContent = showMonth ? `${UI.y}年${UI.m + 1}月` : '財布';
   $('#prevMonth').hidden = !showMonth;
   $('#nextMonth').hidden = !showMonth;
   $$('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === UI.tab));
   view.innerHTML = { home: homeView, cal: calView, list: listView, wallet: walletView }[UI.tab]();
 }
 
-function billRow(it, withButton = true) {
-  const c = catOf('expense', it.bill.category);
-  const d = it.due;
+function billRow(it) {
   return `
   <div class="row-item">
-    ${mark(c)}
-    <div class="row-main" data-edit-bill="${it.bill.id}">
-      <div class="t"><span>${esc(it.bill.name)}</span>${dueLabel(it)}</div>
-      <div class="s">${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]}) ・ ${esc(walletOf(it.bill.walletId)?.name || '')}</div>
-    </div>
+    ${mark(catOf('expense', it.bill.category))}
+    <div class="row-main" data-edit-bill="${it.bill.id}"><div class="t"><span>${esc(it.bill.name)}</span>${dueLabel(it)}</div></div>
     <div class="amt num">${yen(it.bill.amount)}</div>
-    ${withButton ? `<button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${it.bill.id}">${it.tx ? '済' : '支払う'}</button>` : ''}
+    <button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${it.bill.id}">${it.tx ? '済' : '支払う'}</button>
   </div>`;
 }
 
 function txRow(t) {
   const isTr = t.type === 'transfer';
   const c = isTr ? TRANSFER : catOf(t.type, t.category);
-  const w = walletOf(t.walletId)?.name || '';
-  const sub = isTr ? `${esc(w)} → ${esc(walletOf(t.toWalletId)?.name || '')}` : esc(w);
-  const cls = t.type === 'income' ? 'income' : t.type === 'expense' ? '' : 'muted';
+  const title = isTr ? `${walletOf(t.walletId)?.name || ''} → ${walletOf(t.toWalletId)?.name || ''}` : t.memo || c.name;
+  const cls = t.type === 'income' ? 'income' : isTr ? 'muted' : '';
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   return `
   <button class="row-item" data-edit-tx="${t.id}">
     ${mark(c)}
-    <div class="row-main">
-      <div class="t"><span>${esc(t.memo || c.name)}</span></div>
-      <div class="s">${t.memo ? esc(c.name) + ' ・ ' : ''}${sub}${t.billId ? ' ・ 定期' : ''}</div>
-    </div>
+    <div class="row-main"><div class="t"><span>${esc(title)}</span></div></div>
     <div class="amt num ${cls}">${sign}${yen(t.amount)}</div>
   </button>`;
 }
@@ -231,26 +222,22 @@ function homeView() {
   const shown = (unpaid.length ? unpaid : bills).slice(0, 3);
   const totalBal = S.wallets.reduce((s, w) => s + balance(w.id), 0);
 
-  // カテゴリ別
+  // カテゴリ別（上位4件＋その他）
   const byCat = {};
   for (const t of monthTxs(y, m)) if (t.type === 'expense') byCat[t.category] = (byCat[t.category] || 0) + t.amount;
   const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
-  const top = cats.slice(0, 5);
-  const rest = cats.slice(5).reduce((s, [, v]) => s + v, 0);
+  const top = cats.slice(0, 4);
+  const rest = cats.slice(4).reduce((s, [, v]) => s + v, 0);
   if (rest) top.push(['__rest', rest]);
 
-  const budgetHtml = budget ? (() => {
-    const pct = Math.min(100, (tot.expense / budget) * 100);
-    const left = budget - tot.expense;
-    return `<div class="budget ${left < 0 ? 'over' : ''}">
-      <div class="bar"><span style="width:${pct}%"></span></div>
-      <div class="budget-meta"><span>予算 ${yen(budget)}</span><span>${left >= 0 ? `残り <b class="num">${yen(left)}</b>` : `<b class="expense num">${yen(-left)} オーバー</b>`}</span></div>
-    </div>`;
-  })() : '';
+  const left = budget - tot.expense;
+  const budgetHtml = budget ? `<div class="budget ${left < 0 ? 'over' : ''}">
+      <div class="bar"><span style="width:${Math.min(100, (tot.expense / budget) * 100)}%"></span></div>
+      <div class="budget-meta"><span></span><span>${left >= 0 ? `予算残り <b class="num">${yen(left)}</b>` : `<b class="expense num">予算を${yen(-left)}超過</b>`}</span></div>
+    </div>` : '';
 
   return `
   <section class="card summary">
-    <div class="label">今月の収支</div>
     <div class="big num ${tot.net < 0 ? 'expense' : ''}">${signed(tot.net)}</div>
     <div class="row">
       <div class="pill"><span class="label">収入</span><b class="num income">${yen(tot.income)}</b></div>
@@ -261,27 +248,27 @@ function homeView() {
 
   <section class="card">
     <div class="card-head">
-      <h2>今月の支払い ${unpaid.length ? `<span class="badge warn">残り${unpaid.length}件 ${yen(unpaidSum)}</span>` : bills.length ? '<span class="badge ok">すべて完了</span>' : ''}</h2>
-      <button class="link" data-act="bills">管理</button>
+      <h2>支払い</h2>
+      ${unpaid.length ? `<span class="head-val num">残り ${yen(unpaidSum)}</span>` : bills.length ? '<span class="head-val">完了</span>' : ''}
     </div>
-    ${bills.length ? `<div class="rows">${shown.map((b) => billRow(b)).join('')}</div>
-      ${bills.length > shown.length ? `<button class="link" data-goto="cal" style="width:100%">カレンダーですべて見る（${bills.length}件）</button>` : ''}`
-      : `<div class="empty">家賃・サブスクなど毎月の支払いを登録すると<br>期日前にお知らせします<br><button class="btn sm" data-act="new-bill">＋ 支払いを登録</button></div>`}
+    ${bills.length ? `<div class="rows">${shown.map(billRow).join('')}</div>
+      ${bills.length > shown.length ? `<button class="link more" data-goto="cal">ほか${bills.length - shown.length}件</button>` : ''}`
+      : '<div class="empty"><button class="btn sm" data-act="new-bill">＋ 支払いを登録</button></div>'}
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>財布の残高 <b class="num" style="color:var(--text)">${yen(totalBal)}</b></h2><button class="link" data-goto="wallet">詳細</button></div>
+    <div class="card-head"><h2>財布</h2><span class="head-val num">${yen(totalBal)}</span></div>
     <div class="wallet-strip">
       ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="wchip" data-edit-wallet="${w.id}"><span class="n">${esc(w.name)}</span><b class="num ${b < 0 ? 'expense' : ''}">${yen(b)}</b></button>`; }).join('')}
     </div>
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>支出の内訳</h2><button class="link" data-goto="list">履歴</button></div>
+    <div class="card-head"><h2>内訳</h2></div>
     ${top.length ? `
       <div class="bar cat-bar">${top.map(([id, v]) => `<span style="width:${(v / tot.expense) * 100}%;background:${id === '__rest' ? '#c9c4b8' : catOf('expense', id).color}"></span>`).join('')}</div>
       <div class="legend">${top.map(([id, v]) => { const c = id === '__rest' ? { name: 'その他', color: '#c9c4b8' } : catOf('expense', id); return `<div><i style="background:${c.color}"></i><span>${c.name}</span><b class="num">${yen(v)}</b></div>`; }).join('')}</div>`
-      : '<div class="empty">まだ支出の記録がありません<br>下の「＋」から記録できます</div>'}
+      : '<div class="empty">まだ支出の記録がありません</div>'}
   </section>`;
 }
 
@@ -327,20 +314,20 @@ function calView() {
       ${WD.map((w, i) => `<div class="cal-wd ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</div>`).join('')}
       ${cells}
     </div>
-    <div class="cal-legend"><span><i></i>支払い予定</span><span><i class="late"></i>期限超過</span><span><i class="paid"></i>支払済</span></div>
+    <div class="cal-legend"><span><i></i>予定</span><span><i class="late"></i>超過</span><span><i class="paid"></i>済</span></div>
   </section>
 
   <section class="card">
     <div class="card-head">
-      <h2>${sel.getMonth() + 1}月${sel.getDate()}日(${WD[sel.getDay()]})</h2>
-      <button class="link" data-act="add-on-day">＋ この日に記録</button>
+      <h2>${sel.getMonth() + 1}/${sel.getDate()}(${WD[sel.getDay()]})</h2>
+      <button class="link" data-act="add-on-day">＋ 記録</button>
     </div>
-    ${selBills.length || selTxs.length ? `<div class="rows">${selBills.map((b) => billRow(b)).join('')}${selTxs.map(txRow).join('')}</div>` : '<div class="empty">予定・記録はありません</div>'}
+    ${selBills.length || selTxs.length ? `<div class="rows">${selBills.map(billRow).join('')}${selTxs.map(txRow).join('')}</div>` : '<div class="empty">なし</div>'}
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>毎月の支払い（${bills.length}件）</h2><button class="link" data-act="new-bill">＋ 追加</button></div>
-    ${bills.length ? `<div class="rows">${bills.map((b) => billRow(b)).join('')}</div>` : '<div class="empty">登録された定期支払いはありません</div>'}
+    <div class="card-head"><h2>毎月の支払い</h2><button class="link" data-act="new-bill">＋ 追加</button></div>
+    ${bills.length ? `<div class="rows">${bills.map(billRow).join('')}</div>` : '<div class="empty">なし</div>'}
   </section>`;
 }
 
@@ -352,69 +339,61 @@ function listView() {
     .sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1));
   const groups = {};
   for (const t of txs) (groups[t.date] ||= []).push(t);
-  const tot = totals(y, m);
 
   return `
   <div class="seg" data-filter>
     ${[['all', 'すべて'], ['expense', '支出'], ['income', '収入'], ['transfer', '振替']].map(([v, l]) => `<button data-v="${v}" class="${f === v ? 'on' : ''}">${l}</button>`).join('')}
   </div>
-  <section class="card summary" style="padding:10px 14px">
-    <div class="row" style="margin:0">
-      <div><span class="label">収入</span> <b class="num income">${yen(tot.income)}</b></div>
-      <div><span class="label">支出</span> <b class="num expense">${yen(tot.expense)}</b></div>
-    </div>
-  </section>
   ${txs.length ? Object.entries(groups).map(([d, list]) => {
     const dt = parseYmd(d);
     const net = list.reduce((s, t) => s + (t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0), 0);
     return `<div class="day-head"><span>${dt.getMonth() + 1}/${dt.getDate()}(${WD[dt.getDay()]})</span><span class="num">${net ? signed(net) : ''}</span></div>
-      <section class="card" style="padding:4px 16px"><div class="rows">${list.map(txRow).join('')}</div></section>`;
-  }).join('') : '<section class="card"><div class="empty">この月の記録はありません</div></section>'}`;
+      <section class="card" style="padding:2px 16px"><div class="rows">${list.map(txRow).join('')}</div></section>`;
+  }).join('') : '<section class="card"><div class="empty">記録なし</div></section>'}`;
 }
 
 function walletView() {
   const total = S.wallets.reduce((s, w) => s + balance(w.id), 0);
-  const notifySupported = 'Notification' in window;
-  const perm = notifySupported ? Notification.permission : 'unsupported';
+  const perm = 'Notification' in window ? Notification.permission : 'unsupported';
+  const note = perm === 'denied' ? 'ブラウザでブロック中' : perm === 'unsupported' ? 'この端末は非対応' : '';
   return `
   <section class="card summary">
-    <div class="label">総資産</div>
     <div class="big num ${total < 0 ? 'expense' : ''}">${yen(total)}</div>
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>財布・口座</h2><button class="link" data-act="new-wallet">＋ 追加</button></div>
+    <div class="card-head"><h2>財布</h2><button class="link" data-act="new-wallet">＋ 追加</button></div>
     <div class="rows">
-      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="row-item" data-edit-wallet="${w.id}">${walletMark(w)}<div class="row-main"><div class="t">${esc(w.name)}</div><div class="s">初期残高 ${yen(Number(w.initial) || 0)}</div></div><div class="amt num ${b < 0 ? 'expense' : ''}">${yen(b)}</div></button>`; }).join('')}
+      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="row-item" data-edit-wallet="${w.id}">${walletMark(w)}<div class="row-main"><div class="t"><span>${esc(w.name)}</span></div></div><div class="amt num ${b < 0 ? 'expense' : ''}">${yen(b)}</div></button>`; }).join('')}
     </div>
-    <button class="btn ghost block sm" data-act="transfer" style="margin-top:8px">財布間で移動（振替）</button>
+    <button class="btn ghost block sm" data-act="transfer" style="margin-top:8px">振替</button>
   </section>
 
   <section class="card">
     <div class="card-head"><h2>設定</h2></div>
     <div class="set-row">
-      <div class="row-main"><div class="t">支払いの通知</div><div class="s">${perm === 'denied' ? 'ブラウザで通知がブロックされています' : perm === 'unsupported' ? 'この端末は通知に未対応です。カレンダー登録をお使いください' : 'アプリを開いた時に期日が近い支払いをお知らせ'}</div></div>
-      <label class="switch"><input type="checkbox" id="notifyToggle" ${S.settings.notify && perm === 'granted' ? 'checked' : ''} ${perm === 'unsupported' || perm === 'denied' ? 'disabled' : ''}><span></span></label>
+      <div class="row-main"><div class="t">通知</div>${note ? `<div class="s">${note}</div>` : ''}</div>
+      <label class="switch"><input type="checkbox" id="notifyToggle" ${S.settings.notify && perm === 'granted' ? 'checked' : ''} ${note ? 'disabled' : ''}><span></span></label>
     </div>
     <div class="set-row">
-      <div class="row-main"><div class="t">スマホのカレンダーに登録</div><div class="s">毎月の支払いを通知付きの予定として書き出し（確実に通知したい場合におすすめ）</div></div>
+      <div class="row-main"><div class="t">カレンダーに登録</div></div>
       <button class="btn sm" data-act="ics">書き出し</button>
     </div>
     <div class="set-row">
-      <div class="row-main"><div class="t">月の予算</div><div class="s">${S.settings.budget ? yen(S.settings.budget) : '未設定'}</div></div>
-      <button class="btn ghost sm" data-act="budget">変更</button>
+      <div class="row-main"><div class="t">月の予算</div></div>
+      <button class="btn ghost sm num" data-act="budget">${S.settings.budget ? yen(S.settings.budget) : '設定'}</button>
     </div>
     <div class="set-row">
-      <div class="row-main"><div class="t">表計算用に書き出し</div><div class="s">全期間の記録をCSVで出力（Excel・Googleスプレッドシート対応）</div></div>
+      <div class="row-main"><div class="t">CSV書き出し</div></div>
       <button class="btn ghost sm" data-act="csv">CSV</button>
     </div>
     <div class="set-row">
-      <div class="row-main"><div class="t">バックアップ</div><div class="s">データはこの端末内だけに保存されています</div></div>
+      <div class="row-main"><div class="t">バックアップ</div></div>
       <button class="btn ghost sm" data-act="export">保存</button>
       <button class="btn ghost sm" data-act="import">復元</button>
     </div>
     <div class="set-row">
-      <div class="row-main"><div class="t">すべてのデータを削除</div></div>
+      <div class="row-main"><div class="t">全データ削除</div></div>
       <button class="btn danger sm" data-act="reset">削除</button>
     </div>
   </section>`;
@@ -551,24 +530,6 @@ function billSheet(bill) {
     });
     if (!bill) setTimeout(() => f.name.focus(), 250);
   });
-}
-
-function billsListSheet() {
-  const items = monthBills(UI.y, UI.m);
-  const sum = items.reduce((s, i) => s + i.bill.amount, 0);
-  openSheet(`
-    <h3>毎月の支払い <span class="muted num" style="font-size:14px">合計 ${yen(sum)}/月</span></h3>
-    <section class="card" style="padding:4px 16px">
-      ${items.length ? `<div class="rows">${items.map((i) => `
-        <button class="row-item" data-edit-bill="${i.bill.id}">
-          ${mark(catOf('expense', i.bill.category))}
-          <div class="row-main"><div class="t">${esc(i.bill.name)}</div><div class="s">毎月${i.bill.day === 31 ? '月末' : i.bill.day + '日'} ・ ${NOTIFY_OPTS.find(([v]) => v === i.bill.notifyDays)?.[1] || ''}に通知</div></div>
-          <div class="amt num">${yen(i.bill.amount)}</div>
-        </button>`).join('')}</div>` : '<div class="empty">まだ登録がありません</div>'}
-    </section>
-    <div class="btn-row" style="margin-top:12px">
-      <button class="btn" data-act="new-bill">＋ 支払いを登録</button>
-    </div>`);
 }
 
 function walletSheet(w) {
@@ -751,7 +712,7 @@ function shiftMonth(delta) {
 }
 $('#prevMonth').onclick = () => shiftMonth(-1);
 $('#nextMonth').onclick = () => shiftMonth(1);
-$$('.tab').forEach((b) => (b.onclick = () => { UI.tab = b.dataset.tab; render(); window.scrollTo(0, 0); }));
+$$('.tab').forEach((b) => (b.onclick = () => { UI.tab = b.dataset.tab; render(); view.scrollTop = 0; }));
 $('#fab').onclick = () => {
   const inView = UI.tab === 'cal' ? UI.sel : todayStr().startsWith(ym(UI.y, UI.m)) ? todayStr() : ymd(new Date(UI.y, UI.m, 1));
   txSheet(null, { date: inView });
@@ -779,11 +740,10 @@ document.addEventListener('click', (e) => {
   if (ds.editBill) return billSheet(S.bills.find((b) => b.id === ds.editBill));
   if (ds.editTx) return txSheet(S.txs.find((t) => t.id === ds.editTx));
   if (ds.editWallet) return walletSheet(walletOf(ds.editWallet));
-  if (ds.goto) { UI.tab = ds.goto; render(); window.scrollTo(0, 0); return; }
+  if (ds.goto) { UI.tab = ds.goto; render(); view.scrollTop = 0; return; }
   if (ds.day) { UI.sel = ds.day; render(); return; }
   if (el.parentElement?.dataset.filter !== undefined && ds.v) { UI.filter = ds.v; render(); return; }
   switch (ds.act) {
-    case 'bills': return billsListSheet();
     case 'new-bill': return billSheet(null);
     case 'new-wallet': return walletSheet(null);
     case 'transfer': return txSheet(null, { type: 'transfer' });
