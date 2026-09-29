@@ -9,31 +9,30 @@ const KEY = 'osaifu:v1';
 
 const CATS = {
   expense: [
-    { id: 'food', name: '食費', icon: '🍙', color: '#f59e0b' },
-    { id: 'daily', name: '日用品', icon: '🧴', color: '#10b981' },
-    { id: 'house', name: '住居', icon: '🏠', color: '#6366f1' },
-    { id: 'utility', name: '光熱費', icon: '💡', color: '#eab308' },
-    { id: 'phone', name: '通信', icon: '📱', color: '#0ea5e9' },
-    { id: 'transport', name: '交通', icon: '🚃', color: '#14b8a6' },
-    { id: 'subsc', name: 'サブスク', icon: '🔁', color: '#a855f7' },
-    { id: 'insurance', name: '保険', icon: '🛡️', color: '#64748b' },
-    { id: 'medical', name: '医療', icon: '🏥', color: '#ef4444' },
-    { id: 'fun', name: '娯楽', icon: '🎮', color: '#ec4899' },
-    { id: 'clothes', name: '衣服', icon: '👕', color: '#8b5cf6' },
-    { id: 'edu', name: '教育', icon: '📚', color: '#3b82f6' },
-    { id: 'social', name: '交際費', icon: '🍻', color: '#f97316' },
-    { id: 'card', name: 'カード', icon: '💳', color: '#78716c' },
-    { id: 'other', name: 'その他', icon: '📦', color: '#94a3b8' },
+    { id: 'food', name: '食費', icon: '食', color: '#c0793a' },
+    { id: 'daily', name: '日用品', icon: '日', color: '#6f8f5e' },
+    { id: 'house', name: '住居', icon: '住', color: '#5a6f93' },
+    { id: 'utility', name: '光熱費', icon: '光', color: '#b0913a' },
+    { id: 'phone', name: '通信', icon: '信', color: '#4f86a6' },
+    { id: 'transport', name: '交通', icon: '交', color: '#4a8a86' },
+    { id: 'subsc', name: 'サブスク', icon: '定', color: '#8a6aa3' },
+    { id: 'insurance', name: '保険', icon: '保', color: '#6c7480' },
+    { id: 'medical', name: '医療', icon: '医', color: '#b35b55' },
+    { id: 'fun', name: '娯楽', icon: '遊', color: '#b0647f' },
+    { id: 'clothes', name: '衣服', icon: '衣', color: '#7d6aa0' },
+    { id: 'edu', name: '教育', icon: '学', color: '#4d6fa8' },
+    { id: 'social', name: '交際費', icon: '際', color: '#c2703f' },
+    { id: 'card', name: 'カード', icon: 'カ', color: '#7a7066' },
+    { id: 'other', name: 'その他', icon: '他', color: '#8e8a80' },
   ],
   income: [
-    { id: 'salary', name: '給与', icon: '💼', color: '#059669' },
-    { id: 'bonus', name: '賞与', icon: '🎁', color: '#16a34a' },
-    { id: 'side', name: '副業', icon: '💻', color: '#0d9488' },
-    { id: 'gift', name: 'お小遣い', icon: '🧧', color: '#65a30d' },
-    { id: 'other_in', name: 'その他', icon: '💰', color: '#84cc16' },
+    { id: 'salary', name: '給与', icon: '給', color: '#3d7a4f' },
+    { id: 'bonus', name: '賞与', icon: '賞', color: '#4f8a45' },
+    { id: 'side', name: '副業', icon: '副', color: '#3f7f76' },
+    { id: 'gift', name: 'お小遣い', icon: '贈', color: '#6f8a3a' },
+    { id: 'other_in', name: 'その他', icon: '他', color: '#7a8a4a' },
   ],
 };
-const WALLET_ICONS = ['👛', '🏦', '💳', '📱', '🐷', '💴', '🪙', '🏧'];
 const NOTIFY_OPTS = [[0, '当日'], [1, '1日前'], [3, '3日前'], [7, '7日前']];
 
 /* ---------- utils ---------- */
@@ -51,15 +50,20 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const WD = ['日', '月', '火', '水', '木', '金', '土'];
 const todayStr = () => ymd(new Date());
 const daysBetween = (a, b) => Math.round((b - a) / 86400000);
-const catOf = (type, id) => (CATS[type] || CATS.expense).find((c) => c.id === id) || { name: '未分類', icon: '📦', color: '#94a3b8' };
+const catOf = (type, id) => (CATS[type] || CATS.expense).find((c) => c.id === id) || { name: '未分類', icon: '他', color: '#8e8a80' };
+const TRANSFER = { name: '振替', icon: '移', color: '#6c7480' };
+const WALLET_COLORS = ['#5a6f93', '#3d7a4f', '#b0913a', '#b35b55', '#8a6aa3', '#4a8a86'];
+/** 分類・財布の目印（色付きの1文字） */
+const mark = (c) => `<div class="ic" style="--c:${c.color}">${esc(c.icon)}</div>`;
+const walletMark = (w) => mark({ icon: [...(w?.name || '?')][0], color: WALLET_COLORS[Math.max(0, S.wallets.indexOf(w)) % WALLET_COLORS.length] });
 
 /* ---------- state ---------- */
 function seed() {
   return {
     wallets: [
-      { id: 'cash', name: '現金', icon: '👛', initial: 0 },
-      { id: 'bank', name: '銀行口座', icon: '🏦', initial: 0 },
-      { id: 'card', name: 'クレジットカード', icon: '💳', initial: 0 },
+      { id: 'cash', name: '現金', initial: 0 },
+      { id: 'bank', name: '銀行口座', initial: 0 },
+      { id: 'card', name: 'クレジットカード', initial: 0 },
     ],
     txs: [],
     bills: [],
@@ -189,7 +193,7 @@ function billRow(it, withButton = true) {
   const d = it.due;
   return `
   <div class="row-item">
-    <div class="ic">${c.icon}</div>
+    ${mark(c)}
     <div class="row-main" data-edit-bill="${it.bill.id}">
       <div class="t"><span>${esc(it.bill.name)}</span>${dueLabel(it)}</div>
       <div class="s">${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]}) ・ ${esc(walletOf(it.bill.walletId)?.name || '')}</div>
@@ -201,14 +205,14 @@ function billRow(it, withButton = true) {
 
 function txRow(t) {
   const isTr = t.type === 'transfer';
-  const c = isTr ? { icon: '🔄', name: '振替' } : catOf(t.type, t.category);
+  const c = isTr ? TRANSFER : catOf(t.type, t.category);
   const w = walletOf(t.walletId)?.name || '';
   const sub = isTr ? `${esc(w)} → ${esc(walletOf(t.toWalletId)?.name || '')}` : esc(w);
   const cls = t.type === 'income' ? 'income' : t.type === 'expense' ? '' : 'muted';
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   return `
   <button class="row-item" data-edit-tx="${t.id}">
-    <div class="ic">${c.icon}</div>
+    ${mark(c)}
     <div class="row-main">
       <div class="t"><span>${esc(t.memo || c.name)}</span></div>
       <div class="s">${t.memo ? esc(c.name) + ' ・ ' : ''}${sub}${t.billId ? ' ・ 定期' : ''}</div>
@@ -268,15 +272,15 @@ function homeView() {
   <section class="card">
     <div class="card-head"><h2>財布の残高 <b class="num" style="color:var(--text)">${yen(totalBal)}</b></h2><button class="link" data-goto="wallet">詳細</button></div>
     <div class="wallet-strip">
-      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="wchip" data-edit-wallet="${w.id}"><span class="n">${w.icon} ${esc(w.name)}</span><b class="num ${b < 0 ? 'expense' : ''}">${yen(b)}</b></button>`; }).join('')}
+      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="wchip" data-edit-wallet="${w.id}"><span class="n">${esc(w.name)}</span><b class="num ${b < 0 ? 'expense' : ''}">${yen(b)}</b></button>`; }).join('')}
     </div>
   </section>
 
   <section class="card">
     <div class="card-head"><h2>支出の内訳</h2><button class="link" data-goto="list">履歴</button></div>
     ${top.length ? `
-      <div class="bar cat-bar">${top.map(([id, v]) => `<span style="width:${(v / tot.expense) * 100}%;background:${id === '__rest' ? '#cbd5e1' : catOf('expense', id).color}"></span>`).join('')}</div>
-      <div class="legend">${top.map(([id, v]) => { const c = id === '__rest' ? { name: 'その他', color: '#cbd5e1', icon: '' } : catOf('expense', id); return `<div><i style="background:${c.color}"></i><span>${c.icon} ${c.name}</span><b class="num">${yen(v)}</b></div>`; }).join('')}</div>`
+      <div class="bar cat-bar">${top.map(([id, v]) => `<span style="width:${(v / tot.expense) * 100}%;background:${id === '__rest' ? '#c9c4b8' : catOf('expense', id).color}"></span>`).join('')}</div>
+      <div class="legend">${top.map(([id, v]) => { const c = id === '__rest' ? { name: 'その他', color: '#c9c4b8' } : catOf('expense', id); return `<div><i style="background:${c.color}"></i><span>${c.name}</span><b class="num">${yen(v)}</b></div>`; }).join('')}</div>`
       : '<div class="empty">まだ支出の記録がありません<br>下の「＋」から記録できます</div>'}
   </section>`;
 }
@@ -381,9 +385,9 @@ function walletView() {
   <section class="card">
     <div class="card-head"><h2>財布・口座</h2><button class="link" data-act="new-wallet">＋ 追加</button></div>
     <div class="rows">
-      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="row-item" data-edit-wallet="${w.id}"><div class="ic">${w.icon}</div><div class="row-main"><div class="t">${esc(w.name)}</div><div class="s">初期残高 ${yen(Number(w.initial) || 0)}</div></div><div class="amt num ${b < 0 ? 'expense' : ''}">${yen(b)}</div></button>`; }).join('')}
+      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="row-item" data-edit-wallet="${w.id}">${walletMark(w)}<div class="row-main"><div class="t">${esc(w.name)}</div><div class="s">初期残高 ${yen(Number(w.initial) || 0)}</div></div><div class="amt num ${b < 0 ? 'expense' : ''}">${yen(b)}</div></button>`; }).join('')}
     </div>
-    <button class="btn ghost block sm" data-act="transfer" style="margin-top:8px">🔄 財布間で移動（振替）</button>
+    <button class="btn ghost block sm" data-act="transfer" style="margin-top:8px">財布間で移動（振替）</button>
   </section>
 
   <section class="card">
@@ -436,9 +440,9 @@ function closeSheet() {
 sheet.addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeSheet(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
 
-const walletOptions = (sel) => S.wallets.map((w) => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${w.icon} ${esc(w.name)}</option>`).join('');
+const walletOptions = (sel) => S.wallets.map((w) => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
 const catGrid = (type, sel) => `<div class="cat-grid">${CATS[type].map((c) => `
-  <label><input type="radio" name="category" value="${c.id}" ${c.id === sel ? 'checked' : ''}><span class="c"><b>${c.icon}</b>${c.name}</span></label>`).join('')}</div>`;
+  <label><input type="radio" name="category" value="${c.id}" ${c.id === sel ? 'checked' : ''}><span class="c"><b style="--c:${c.color}">${c.icon}</b>${c.name}</span></label>`).join('')}</div>`;
 const parseAmount = (v) => Math.round(Number(String(v).replace(/[^\d.]/g, '')) || 0);
 
 function txSheet(tx, preset = {}) {
@@ -557,7 +561,7 @@ function billsListSheet() {
     <section class="card" style="padding:4px 16px">
       ${items.length ? `<div class="rows">${items.map((i) => `
         <button class="row-item" data-edit-bill="${i.bill.id}">
-          <div class="ic">${catOf('expense', i.bill.category).icon}</div>
+          ${mark(catOf('expense', i.bill.category))}
           <div class="row-main"><div class="t">${esc(i.bill.name)}</div><div class="s">毎月${i.bill.day === 31 ? '月末' : i.bill.day + '日'} ・ ${NOTIFY_OPTS.find(([v]) => v === i.bill.notifyDays)?.[1] || ''}に通知</div></div>
           <div class="amt num">${yen(i.bill.amount)}</div>
         </button>`).join('')}</div>` : '<div class="empty">まだ登録がありません</div>'}
@@ -568,13 +572,10 @@ function billsListSheet() {
 }
 
 function walletSheet(w) {
-  const x = w || { name: '', icon: '👛', initial: 0 };
+  const x = w || { name: '', initial: 0 };
   openSheet(`
     <form class="form" id="wForm">
       <h3>${w ? '財布を編集' : '財布・口座を追加'}</h3>
-      <div class="field"><span class="lbl">アイコン</span>
-        <div class="cat-grid" style="grid-template-columns:repeat(8,1fr)">${WALLET_ICONS.map((i) => `<label><input type="radio" name="icon" value="${i}" ${i === x.icon ? 'checked' : ''}><span class="c"><b>${i}</b></span></label>`).join('')}</div>
-      </div>
       <div class="field"><label>名前</label><input class="input" name="name" value="${esc(x.name)}" placeholder="例：PayPay、楽天銀行" required></div>
       <div class="field"><label>初期残高（現在の残高を入力）</label><input class="input num" name="initial" inputmode="numeric" value="${Number(x.initial) || ''}" placeholder="0"></div>
       ${w ? `<div class="muted" style="font-size:12px">現在の残高：${yen(balance(w.id))}</div>` : ''}
@@ -586,7 +587,7 @@ function walletSheet(w) {
       e.preventDefault();
       const fd = new FormData(f);
       const raw = String(fd.get('initial')).replace(/[^\d-]/g, '');
-      const v = { name: String(fd.get('name')).trim(), icon: fd.get('icon') || '👛', initial: Number(raw) || 0 };
+      const v = { name: String(fd.get('name')).trim(), initial: Number(raw) || 0 };
       if (!v.name) return;
       if (w) Object.assign(w, v); else S.wallets.push({ id: uid(), ...v });
       save(); closeSheet(); render();
@@ -679,7 +680,7 @@ function exportIcs() {
     lines.push(
       'BEGIN:VEVENT', `UID:${b.id}@osaifu`, `DTSTAMP:${stamp}`,
       `DTSTART;VALUE=DATE:${ds}`, `DTEND;VALUE=DATE:${de}`, rule,
-      `SUMMARY:${icsEsc(`💴 ${b.name} ${yen(b.amount)}`)}`,
+      `SUMMARY:${icsEsc(`${b.name} ${yen(b.amount)}`)}`,
       `DESCRIPTION:${icsEsc(`支払い元：${walletOf(b.walletId)?.name || ''}`)}`,
       'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEsc(`${b.name}の支払い`)}`, `TRIGGER:${trigger}`, 'END:VALARM',
       'END:VEVENT',
