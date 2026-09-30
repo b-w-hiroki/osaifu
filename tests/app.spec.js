@@ -5,6 +5,8 @@ const KEY = 'osaifu:v1';
 
 // 日付を 2026-09-28 に固定して毎回同じ結果にする
 test.beforeEach(async ({ page }) => {
+  // 広告（i-mobile）へは通信しない
+  await page.route('https://imp-adedge.i-mobile.co.jp/**', (route) => route.abort());
   await page.clock.setFixedTime(new Date('2026-09-28T10:00:00+09:00'));
   // 本物の config.js（Firebase設定）に左右されないよう、既定は「未設定」。ログインのテストは後から上書きする
   await page.route('**/config.js', (route) => route.fulfill({ body: 'window.OSAIFU_FIREBASE = null; window.OSAIFU_REQUIRE_LOGIN = false;', contentType: 'text/javascript' }));
