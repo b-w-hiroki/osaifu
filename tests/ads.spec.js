@@ -32,6 +32,7 @@ async function withAds(page) {
 }
 
 test('未設定なら広告枠は出ず、i-mobile へ通信しない', async ({ page }) => {
+  await page.addInitScript(() => { window.BIRDMAN_ADS_TEST_CONFIG = { pid: null, spots: {} }; });
   const hits = [];
   page.on('request', (r) => { if (/i-mobile/.test(r.url())) hits.push(r.url()); });
   await page.goto('/');
@@ -98,4 +99,22 @@ test('利用規約とプライバシーポリシーが開ける', async ({ page 
   await page.goto('/privacy.html');
   await expect(page.locator('h1')).toHaveText('プライバシーポリシー');
   await expect(page.getByRole('link', { name: 'アイモバイルのオプトアウトのページ' })).toBeVisible();
+});
+
+test('本番の設定: スマホと PC でそれぞれ発行されたスポットを読み込む', async ({ page, browser }) => {
+  async function pushedOn(pg) {
+    const pushed = [];
+    await pg.route('**/spot.js*', (r) => r.fulfill({ contentType: 'text/javascript', body: FAKE_SDK }));
+    await pg.exposeFunction('__record', (o) => pushed.push(o));
+    await pg.addInitScript(() => { window.adsbyimobile = { push: (o) => window.__record(o) }; });
+    await pg.goto('/');
+    await pg.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await expect.poll(() => pushed.length).toBe(1);
+    return pushed[0];
+  }
+  expect(await pushedOn(page)).toMatchObject({ pid: 84969, mid: 596790, asid: 1946456, elementid: 'im-9f99b0988b4946b5aebb140752952f23' });
+  const pc = await browser.newContext({ viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false,
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36' });
+  expect(await pushedOn(await pc.newPage())).toMatchObject({ pid: 84969, mid: 596789, asid: 1946459, elementid: 'im-bfe22a60aa8347d4865e764acdb93b56' });
+  await pc.close();
 });
