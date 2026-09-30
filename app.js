@@ -303,7 +303,18 @@ function render() {
   $('#nextMonth').hidden = !showMonth;
   $$('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === UI.tab));
   view.innerHTML = { home: homeView, cal: calView, list: listView, wallet: walletView }[UI.tab]();
+  if (UI.tab === 'list') placeAd(view, 'history');
   renderLogin();
+}
+
+/* ---------- 広告枠（i-mobile。ads.js にスポットを設定するまで何も表示・通信しない） ---------- */
+const AD_SLOTS = {};
+/** 描き直しのたびに広告を読み込み直さないよう、枠の要素は使い回して末尾に付け直す */
+function placeAd(parent, spot) {
+  if (!window.BirdmanAds) return;
+  const el = AD_SLOTS[spot] || (AD_SLOTS[spot] = window.BirdmanAds.slot(spot));
+  parent.appendChild(el);
+  window.BirdmanAds.mount(parent);
 }
 
 /* ---------- login ---------- */
@@ -350,7 +361,10 @@ function paintLogin() {
     </form>
     ${signup ? '' : '<button class="link" type="button" data-login="reset">パスワードを忘れた</button>'}
     ${canSkip ? `<button class="link muted-link" type="button" data-login="skip">${UI.forceLogin ? '戻る' : 'ログインせずに使う'}</button>` : ''}
+    ${signup ? '<p class="login-note">登録すると、利用規約とプライバシーポリシーに同意したものとみなします。</p>' : ''}
+    <p class="login-legal"><a href="./">おさいふについて</a> ・ <a href="./terms.html">利用規約</a> ・ <a href="./privacy.html">プライバシーポリシー</a></p>
   </div>`;
+  placeAd(el, 'login');
 }
 
 async function runLogin(fn) {

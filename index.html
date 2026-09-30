@@ -127,6 +127,10 @@
 
     .final { text-align: center; background: var(--surface-2); border-radius: 24px; padding: 44px 20px; }
     .final .cta { justify-content: center; }
+    .ad-slot { display: none; margin: 40px auto 0; text-align: center; max-width: 100%; overflow: hidden; }
+    .ad-slot.has-ad { display: block; }
+    .ad-slot .ad-label { font-size: 10px; color: var(--muted); letter-spacing: .12em; margin-bottom: 6px; font-weight: 600; }
+    .ad-slot .ad-content { display: flex; justify-content: center; align-items: center; min-height: 50px; }
     footer { padding: 32px 0 calc(40px + env(safe-area-inset-bottom)); color: var(--muted); font-size: 13px; text-align: center; }
     footer nav { display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; margin-bottom: 8px; }
     footer a { color: var(--muted); }
@@ -248,9 +252,9 @@
     <section>
       <div class="wrap">
         <h2>よくある質問</h2>
-        <details><summary>料金はかかりますか？</summary><p>無料で使えます。</p></details>
+        <details><summary>料金はかかりますか？</summary><p>無料で使えます。運営費は、アプリ内やこのページに表示する広告でまかなっています。</p></details>
         <details><summary>銀行やカードと自動で連携できますか？</summary><p>口座への直接連携はしていません。ID やパスワードを預からない代わりに、各社のサイトからダウンロードした明細 CSV を取り込めます。Money Forward ME や Zaim から書き出した CSV にも対応しています。</p></details>
-        <details><summary>データはどこに保存されますか？</summary><p>お使いの端末のブラウザに保存されます。ログインした場合のみ、クラウドにもあなたのアカウント専用で保存され、ほかの人は見られません。</p></details>
+        <details><summary>データはどこに保存されますか？</summary><p>お使いの端末のブラウザに保存されます。ログインした場合のみ、クラウドにもあなたのアカウント専用で保存され、ほかの人は見られません。詳しくは<a href="./privacy.html">プライバシーポリシー</a>をご覧ください。</p></details>
         <details><summary>アプリを閉じていても通知されますか？</summary><p>アプリ内の通知は、アプリを開いたときに届きます。確実に通知を受けたい場合は、支払日をスマホのカレンダーに書き出してリマインダーを使ってください。</p></details>
         <details><summary>機種変更したらデータはどうなりますか？</summary><p>ログインしていれば新しい端末でログインするだけで戻ります。ログインしない場合は、設定の「バックアップ」で保存したファイルから復元できます。</p></details>
       </div>
@@ -263,13 +267,18 @@
         <div class="cta"><a class="btn btn-primary" href="./app.html">無料ではじめる</a></div>
       </div>
     </div>
+    <!-- 広告枠（i-mobile「トップページ」スポット。ads.js に設定後に表示。未設定なら何も出ない） -->
+    <div class="wrap">
+      <div class="ad-slot" data-ad-spot="lp"><div class="ad-label">広告</div><div class="ad-content"></div></div>
+    </div>
   </main>
 
   <footer>
     <div class="wrap">
-      <nav><a href="./app.html">アプリを開く</a></nav>
+      <nav><a href="./app.html">アプリを開く</a><a href="./terms.html">利用規約</a><a href="./privacy.html">プライバシーポリシー</a></nav>
       <p>© birdman studio</p>
     </div>
   </footer>
+  <script src="ads.js" defer></script>
 </body>
 </html>

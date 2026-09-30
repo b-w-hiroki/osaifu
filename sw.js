@@ -1,6 +1,6 @@
 // オフライン対応用のキャッシュ（アプリシェルのみ）
-const CACHE = 'osaifu-v9';
-const ASSETS = ['./', 'index.html', 'app.html', 'styles.css', 'app.js', 'sync.js', 'config.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
+const CACHE = 'osaifu-v10';
+const ASSETS = ['./', 'index.html', 'app.html', 'terms.html', 'privacy.html', 'styles.css', 'app.js', 'ads.js', 'sync.js', 'config.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));

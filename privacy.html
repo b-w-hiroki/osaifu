@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>プライバシーポリシー｜おさいふ</title>
+  <meta name="theme-color" content="#f7f5f0" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://osaifu.birdman-studio.com/privacy.html">
+  <style>
+    :root { --bg: #f7f5f0; --surface: #fff; --text: #1f1d1a; --muted: #6b675f; --line: #e4e0d6; --primary: #27466e; color-scheme: light dark; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #161513; --surface: #1f1e1b; --text: #ebe7df; --muted: #a8a397; --line: #34322e; --primary: #9db7da; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); line-height: 1.85;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+    main { max-width: 760px; margin: 0 auto; padding: 24px 20px calc(48px + env(safe-area-inset-bottom)); }
+    a { color: var(--primary); }
+    .back { display: inline-block; margin-bottom: 12px; font-weight: 700; text-decoration: none; }
+    h1 { font-size: 26px; margin: 0 0 4px; }
+    h2 { font-size: 18px; margin: 28px 0 6px; }
+    p, li { color: var(--muted); font-size: 15px; }
+    .meta { font-size: 13px; }
+    section { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 4px 18px 10px; margin-top: 14px; }
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="./">← おさいふ</a>
+    <h1>プライバシーポリシー</h1>
+    <p class="meta">制定日：2026年9月30日</p>
+    <p>birdman studio（以下「運営者」）は、家計簿アプリ「おさいふ」（以下「本アプリ」）における利用者の情報の取り扱いを次のとおり定めます。</p>
+
+    <section>
+      <h2>1. 取得する情報</h2>
+      <ul>
+        <li><b>アカウント情報</b>（ログインした場合のみ）：ログインに使うメールアドレス、Googleアカウントの表示名・メールアドレス、利用者を識別するID</li>
+        <li><b>家計の記録</b>（ログインした場合のみ）：収入・支出・振替の記録、カテゴリ、メモ、財布（現金・口座・カード）の名前と残高の初期値、支払い予定、カードの締め日・引き落とし日、予算などの設定</li>
+        <li><b>広告配信に伴う情報</b>：広告配信事業者が Cookie 等を通じて取得する、閲覧したページ・ブラウザや端末の種類・IPアドレス・広告の表示やクリックの状況など（詳しくは「4. 広告の配信」）</li>
+      </ul>
+      <p>ログインせずに利用する場合、家計の記録は利用者の端末内（ブラウザの保存領域）にのみ保存され、運営者は取得しません。</p>
+      <p>本アプリは、銀行口座・クレジットカードの番号、暗証番号、金融機関のログインID・パスワードを取得しません。口座との自動連携も行いません。</p>
+    </section>
+
+    <section>
+      <h2>2. 端末内だけで処理する情報</h2>
+      <ul>
+        <li><b>レシートの写真</b>：金額・日付・店名の読み取りは端末内で行い、画像は運営者や外部へ送信・保存しません。初回のみ、文字認識のプログラムと日本語の認識データを外部の配信サービス（jsDelivr）から取得します。</li>
+        <li><b>明細の CSV</b>：取り込みは端末内で行い、ファイルそのものは送信しません。取り込んだ記録は、ログインしている場合のみ家計の記録として同期されます。</li>
+        <li><b>通知・カレンダー書き出し・バックアップ</b>：いずれも端末内で作成し、運営者には送信しません。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>3. 利用目的と保存先</h2>
+      <ul>
+        <li>記録の保存と、複数の端末・機種変更後の同期</li>
+        <li>ログイン・本人確認、不正利用の防止</li>
+        <li>本アプリの運営費をまかなうための広告の表示</li>
+      </ul>
+      <p>ログイン時の情報と家計の記録は、Google LLC が提供する Firebase（Authentication / Cloud Firestore）に保存されます。各利用者のデータは本人のアカウントからのみ読み書きできるよう設定しています。Firebase における情報の取り扱いは <a href="https://firebase.google.com/support/privacy" rel="noopener">Firebase のプライバシーとセキュリティ</a> をご覧ください。</p>
+      <p>本アプリは Google Fonts を利用しており、フォント取得の際に通信が発生します。</p>
+      <p>家計の記録を広告配信事業者に提供したり、広告のターゲティングに利用したり、販売したりすることはありません。</p>
+    </section>
+
+    <section>
+      <h2>4. 広告の配信</h2>
+      <p>本アプリおよび紹介ページでは、株式会社アイモバイルが提供する広告配信サービス「i-mobile」を利用して広告を表示する場合があります。広告配信事業者は、利用者の興味に応じた広告を表示するために Cookie 等を使用し、上記「広告配信に伴う情報」を取得することがあります。これらの情報に、氏名・メールアドレスや家計の記録は含まれません。</p>
+      <p>i-mobile における情報の取り扱いは <a href="https://www.i-mobile.co.jp/privacy.html" rel="noopener">株式会社アイモバイルのプライバシーポリシー</a> をご覧ください。興味・関心に基づく広告を望まない場合は、<a href="https://www.i-mobile.co.jp/optout.html" rel="noopener">アイモバイルのオプトアウトのページ</a> から無効にできるほか、ブラウザの設定で Cookie を無効にすることもできます。</p>
+      <p>広告の内容やリンク先のサービスは、各広告主の責任で提供されるものです。</p>
+    </section>
+
+    <section>
+      <h2>5. 第三者への提供</h2>
+      <p>法令に基づく場合、および「2」〜「4」に記載した外部サービスの利用に伴う場合を除き、本人の同意なく個人情報を第三者に提供しません。</p>
+    </section>
+
+    <section>
+      <h2>6. データの削除</h2>
+      <p>アプリの「財布 → 全データ削除」から、記録をいつでも削除できます。ログインしている場合は、クラウド上の記録も削除されます。ログインに使ったアカウント自体の削除をご希望の場合は、下記のお問い合わせ先までご連絡ください。</p>
+      <p>ログインせずに保存した記録は、ブラウザのサイトデータの削除でも消去できます。</p>
+    </section>
+
+    <section>
+      <h2>7. 改定</h2>
+      <p>本ポリシーを変更する場合は、このページでお知らせします。利用条件は<a href="./terms.html">利用規約</a>をご覧ください。</p>
+    </section>
+
+    <section>
+      <h2>8. お問い合わせ</h2>
+      <p>本ポリシーおよび個人情報の取り扱いに関するお問い合わせは、<a href="mailto:hiroki.torii4649@gmail.com">hiroki.torii4649@gmail.com</a> までご連絡ください。</p>
+    </section>
+  </main>
+</body>
+</html>
