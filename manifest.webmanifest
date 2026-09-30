@@ -1,7 +1,7 @@
 {
   "name": "おさいふ — 家計簿と支払いカレンダー",
   "short_name": "おさいふ",
-  "start_url": "./",
+  "start_url": "./app.html",
   "scope": "./",
   "display": "standalone",
   "background_color": "#f7f5f0",
