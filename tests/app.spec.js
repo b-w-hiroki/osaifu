@@ -9,7 +9,7 @@ test.beforeEach(async ({ page }) => {
   // 本物の config.js（Firebase設定）に左右されないよう、既定は「未設定」。ログインのテストは後から上書きする
   await page.route('**/config.js', (route) => route.fulfill({ body: 'window.OSAIFU_FIREBASE = null; window.OSAIFU_REQUIRE_LOGIN = false;', contentType: 'text/javascript' }));
   page.on('pageerror', (e) => { throw e; });
-  await page.goto('/');
+  await page.goto('/app.html');
 });
 
 async function seed(page, data) {
@@ -252,7 +252,7 @@ test.describe('ログインとクラウド同期（Firebaseを代替して検証
 
   test('未ログインの初回はログイン画面が出て、「ログインせずに使う」で閉じられる', async ({ page }) => {
     await setup(page);
-    await page.goto('/');
+    await page.goto('/app.html');
     await expect(gate(page)).toBeVisible();
     await expect(gate(page).getByText('Googleでログイン')).toBeVisible();
     await expect(gate(page).locator('input[name=email]')).toBeVisible();
@@ -271,7 +271,7 @@ test.describe('ログインとクラウド同期（Firebaseを代替して検証
 
   test('ログイン必須の設定では「ログインせずに使う」が出ない', async ({ page }) => {
     await setup(page, { require: true });
-    await page.goto('/');
+    await page.goto('/app.html');
     await expect(gate(page)).toBeVisible();
     await expect(gate(page).getByText('ログインせずに使う')).toHaveCount(0);
     await page.reload();
@@ -280,7 +280,7 @@ test.describe('ログインとクラウド同期（Firebaseを代替して検証
 
   test('メールで新規登録するとログインでき、端末とクラウドの記録がそろう', async ({ page }) => {
     await setup(page);
-    await page.goto('/');
+    await page.goto('/app.html');
     await seed(page, { ...base, txs: [{ id: 'local1', type: 'expense', amount: 500, date: '2026-09-20', category: 'fun', walletId: 'cash', memo: 'この端末' }] });
     await gate(page).getByRole('button', { name: '新規登録' }).first().click();
     await gate(page).locator('input[name=email]').fill('me@example.com');
@@ -303,7 +303,7 @@ test.describe('ログインとクラウド同期（Firebaseを代替して検証
 
   test('Googleでログインできる', async ({ page }) => {
     await setup(page);
-    await page.goto('/');
+    await page.goto('/app.html');
     await gate(page).getByText('Googleでログイン').click();
     await expect(gate(page)).toBeHidden();
     await page.click('[data-tab=wallet]');
@@ -312,7 +312,7 @@ test.describe('ログインとクラウド同期（Firebaseを代替して検証
 
   test('ログインの失敗はわかりやすい日本語で出る', async ({ page }) => {
     await setup(page, { accounts: { 'a@example.com': { pw: 'correct-pass', uid: 'ua' } } });
-    await page.goto('/');
+    await page.goto('/app.html');
     const msg = gate(page).locator('.login-msg');
     const submit = gate(page).locator('form button[type=submit]');
     await gate(page).locator('input[name=email]').fill('a@example.com');
@@ -339,7 +339,7 @@ test.describe('ログインとクラウド同期（Firebaseを代替して検証
 
   test('パスワード再設定のメールを送れる', async ({ page }) => {
     await setup(page);
-    await page.goto('/');
+    await page.goto('/app.html');
     await gate(page).getByText('パスワードを忘れた').click();
     await expect(gate(page).locator('.login-msg')).toHaveText('メールアドレスを入力してください');
     await gate(page).locator('input[name=email]').fill('me@example.com');
@@ -351,7 +351,7 @@ test.describe('ログインとクラウド同期（Firebaseを代替して検証
 
   test('ログアウトで端末のデータを片付け、再ログインでクラウドから戻る', async ({ page }) => {
     await setup(page, { accounts: { 'a@example.com': { pw: 'correct-pass', uid: 'ua' } } });
-    await page.goto('/');
+    await page.goto('/app.html');
     await gate(page).locator('input[name=email]').fill('a@example.com');
     await gate(page).locator('input[name=password]').fill('correct-pass');
     await gate(page).locator('form button[type=submit]').click();
@@ -374,7 +374,7 @@ test.describe('ログインとクラウド同期（Firebaseを代替して検証
 
   test('別アカウントのデータが端末に残っていたら、確認してから切り替える', async ({ page }) => {
     await setup(page, { accounts: { 'b@example.com': { pw: 'bbbbbb', uid: 'ub' } } });
-    await page.goto('/');
+    await page.goto('/app.html');
     await seed(page, { ...base, txs: [{ id: 'mine', type: 'expense', amount: 1, date: '2026-09-01', category: 'food', walletId: 'cash', memo: 'Aさんの記録' }] });
     await page.evaluate(() => localStorage.setItem('osaifu:sync-uid', JSON.stringify('ua')));
 
@@ -400,7 +400,7 @@ test.describe('ログインとクラウド同期（Firebaseを代替して検証
   test('前回ログインした端末は、画面を開き直してもログイン画面を出さない', async ({ page }) => {
     await setup(page, { user: { uid: 'u1', email: 'test@example.com' } });
     await page.addInitScript(() => localStorage.setItem('osaifu:sync-on', 'true'));
-    await page.goto('/');
+    await page.goto('/app.html');
     await expect(gate(page)).toBeHidden();
     await page.click('[data-tab=wallet]');
     await expect(page.locator('.set-row', { hasText: 'アカウント' })).toContainText('test@example.com');
