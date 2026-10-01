@@ -692,6 +692,10 @@ function walletView() {
       <button class="btn ghost sm" data-act="import">復元</button>
     </div>
     <div class="set-row">
+      <div class="row-main"><div class="t">お知らせ</div><div class="s">更新情報・大切なご案内</div></div>
+      <a class="btn ghost sm news-link" href="./news.html">見る</a>
+    </div>
+    <div class="set-row">
       <div class="row-main"><div class="t">全データ削除</div></div>
       <button class="btn danger sm" data-act="reset">削除</button>
     </div>
