@@ -9,8 +9,7 @@ const FAKE_SDK = `(function(){
   window.__adLoads = window.__adLoads || 0;
   function draw(o){ window.__adLoads++; var el=document.getElementById(o.elementid); if(!el) return;
     var b=document.createElement('div'); b.className='fake-banner'; b.style.cssText='width:320px;height:50px;background:#ccc'; el.appendChild(b); }
-  var q=window.adsbyimobile||[]; for (var i=0;i<q.length;i++) draw(q[i]);
-  window.adsbyimobile={push:draw};
+  var q=window.adsbyimobile||[]; var pending=q.splice(0); for (var i=0;i<pending.length;i++) draw(pending[i]);
 })();`;
 
 const data = {
@@ -90,6 +89,24 @@ test('ログイン画面ではボタンの下に出て、規約へのリンク�
   await expect(gate.getByText('利用規約とプライバシーポリシーに同意')).toBeVisible();
   await expect(gate.locator('.ad-slot')).toHaveCount(1);
   expect(await page.evaluate(() => window.__adLoads)).toBe(1);
+});
+
+test('client-side navigation flushes a spot queued after the SDK already ran', async ({ page }) => {
+  await withAds(page);
+  const fake = fs.readFileSync(new URL('./fake-firebase.js', import.meta.url), 'utf8');
+  await page.route('https://www.gstatic.com/firebasejs/**', (route) => route.fulfill({ body: fake, contentType: 'text/javascript', headers: { 'access-control-allow-origin': '*' } }));
+  await page.route('**/config.js', (route) => route.fulfill({ body: "window.OSAIFU_FIREBASE = { apiKey: 'test', projectId: 'test' }; window.OSAIFU_REQUIRE_LOGIN = false;", contentType: 'text/javascript' }));
+  await page.addInitScript(() => { globalThis.__fake = { docs: new Map(), listeners: [], authCbs: [], writes: [], resets: [], user: null, accounts: {} }; });
+  await page.goto('/app.html');
+  await expect(page.locator('.ad-slot[data-ad-spot="login"] .fake-banner')).toBeVisible();
+  await page.locator('[data-login="skip"]').click();
+  await page.locator('[data-tab="list"]').click();
+  await expect(page.locator('.ad-slot[data-ad-spot="history"] .fake-banner')).toBeVisible();
+  await page.locator('[data-tab="home"]').click();
+  await page.locator('[data-tab="list"]').click();
+  await expect(page.locator('.ad-slot[data-ad-spot="history"] .fake-banner')).toBeVisible();
+  await expect(page.locator('script[data-imobile-loader]')).toHaveCount(2);
+  expect(await page.evaluate(() => window.__adLoads)).toBe(2);
 });
 
 test('利用規約とプライバシーポリシーが開ける', async ({ page }) => {
