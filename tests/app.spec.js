@@ -548,6 +548,56 @@ test('支出の推移は6か月分を表示し、棒をタップするとその�
   await expect(page.locator('.trend-col.cur')).toContainText('¥3,000');
 });
 
+test('one-month dummy ledger reconciles balances, card settlement, and CSV export', async ({ page }) => {
+  await seed(page, {
+    wallets: [
+      { id: 'cash', name: 'Cash', initial: 20000 },
+      { id: 'bank', name: 'Bank', initial: 200000 },
+      { id: 'card', name: 'Card', initial: 0, kind: 'card', closingDay: 15, payDay: 10, payMonthOffset: 1, payWalletId: 'bank', notifyDays: 3 },
+    ],
+    txs: [
+      { id: 'prev', type: 'expense', amount: 5000, date: '2026-08-10', category: 'food', walletId: 'card', memo: 'previous cycle' },
+      { id: 'cash-food', type: 'expense', amount: 12000, date: '2026-09-03', category: 'food', walletId: 'cash', memo: 'groceries' },
+      { id: 'card-a', type: 'expense', amount: 4000, date: '2026-09-05', category: 'food', walletId: 'card', memo: 'card before close' },
+      { id: 'rent', type: 'expense', amount: 80000, date: '2026-09-27', category: 'house', walletId: 'bank', memo: 'rent' },
+      { id: 'salary', type: 'income', amount: 300000, date: '2026-09-25', category: 'salary', walletId: 'bank', memo: 'salary' },
+      { id: 'card-b', type: 'expense', amount: 6000, date: '2026-09-20', category: 'food', walletId: 'card', memo: 'card after close' },
+    ],
+    bills: [],
+    settings: { budget: 0, notify: false, lastNotified: '' },
+  });
+
+  expect(await page.evaluate(() => ({
+    cash: balance('cash'),
+    bank: balance('bank'),
+    card: balance('card'),
+    charges: [...cardCharges(walletOf('card')).entries()],
+  }))).toEqual({
+    cash: 8000,
+    bank: 420000,
+    card: -15000,
+    charges: [['2026-09-10', 5000], ['2026-10-10', 4000], ['2026-11-10', 6000]],
+  });
+
+  const settlement = page.locator('[data-pay]').first();
+  await expect(settlement).toBeVisible();
+  await settlement.click();
+  expect(await page.evaluate(() => ({
+    cash: balance('cash'),
+    bank: balance('bank'),
+    card: balance('card'),
+  }))).toEqual({ cash: 8000, bank: 415000, card: -10000 });
+
+  const settled = (await state(page)).txs.find((tx) => tx.settleKey === 'card:2026-09-10');
+  expect(settled).toMatchObject({ type: 'transfer', amount: 5000, walletId: 'bank', toWalletId: 'card' });
+
+  await page.click('[data-tab=wallet]');
+  const csv = await readDownload(page, () => page.click('[data-act=csv]'));
+  for (const expected of ['2026-09-03', '12000', '2026-09-05', '4000', '2026-09-20', '6000', '2026-09-25', '300000', '2026-09-27', '80000', '5000']) {
+    expect(csv).toContain(expected);
+  }
+});
+
 const cardBase = {
   wallets: [
     { id: 'cash', name: '現金', initial: 10000 },
