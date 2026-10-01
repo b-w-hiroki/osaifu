@@ -48,6 +48,10 @@ export const writeBatch = () => {
     set: (ref, d) => ops.push(['set', ref.id, d]),
     delete: (ref) => ops.push(['del', ref.id]),
     commit: async () => {
+      if (F.failCommits > 0) {
+        F.failCommits -= 1;
+        throw new Error('injected commit failure');
+      }
       for (const [op, id, d] of ops) {
         F.writes.push(`${op}:${id}`);
         if (op === 'set') F.docs.set(id, structuredClone(d)); else F.docs.delete(id);

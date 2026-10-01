@@ -12,7 +12,7 @@ export default defineConfig({
     serviceWorkers: 'block',
   },
   webServer: {
-    command: 'python3 -m http.server 8765',
+    command: 'node tests/server.mjs',
     url: 'http://localhost:8765',
     reuseExistingServer: !process.env.CI,
   },

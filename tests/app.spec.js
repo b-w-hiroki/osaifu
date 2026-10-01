@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import fs from 'fs';
+import { fileURLToPath } from 'node:url';
 
 const KEY = 'osaifu:v1';
 
@@ -164,6 +165,54 @@ test('バックアップを書き出して復元できる', async ({ page }) => 
   expect((await state(page)).txs[0].amount).toBe(999);
 });
 
+async function restoreJson(page, data) {
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act=import]')]);
+  await chooser.setFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(data)) });
+}
+
+test('restore rejects invalid references and preserves the current data', async ({ page }) => {
+  const current = { ...base, txs: [{ id: 'keep', type: 'expense', amount: 321, date: '2026-09-01', category: 'food', walletId: 'cash', memo: 'keep' }] };
+  await seed(page, current);
+  await page.click('[data-tab=wallet]');
+  await restoreJson(page, { ...base, txs: [{ ...current.txs[0], id: 'bad', walletId: 'missing' }] });
+  await expect(page.locator('#toast')).toContainText('読み込めませんでした');
+  expect(await state(page)).toEqual(current);
+});
+
+test('restore cancellation preserves the current data', async ({ page }) => {
+  const current = { ...base, txs: [{ id: 'keep', type: 'expense', amount: 321, date: '2026-09-01', category: 'food', walletId: 'cash', memo: 'keep' }] };
+  await seed(page, current);
+  await page.click('[data-tab=wallet]');
+  const dialogPromise = page.waitForEvent('dialog');
+  const restorePromise = restoreJson(page, { ...base, txs: [{ ...current.txs[0], id: 'replacement', amount: 999 }] });
+  await (await dialogPromise).dismiss();
+  await restorePromise;
+  expect(await state(page)).toEqual(current);
+});
+
+test('restore storage failure preserves persistent and in-memory data', async ({ page }) => {
+  const current = { ...base, txs: [{ id: 'keep', type: 'expense', amount: 321, date: '2026-09-01', category: 'food', walletId: 'cash', memo: 'keep' }] };
+  await seed(page, current);
+  await page.click('[data-tab=wallet]');
+  await page.evaluate((key) => {
+    globalThis.__originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (name, value) {
+      if (name === key) throw new DOMException('injected quota failure', 'QuotaExceededError');
+      return globalThis.__originalSetItem.call(this, name, value);
+    };
+  }, KEY);
+  const dialogPromise = page.waitForEvent('dialog');
+  const restorePromise = restoreJson(page, { ...base, txs: [{ ...current.txs[0], id: 'replacement', amount: 999 }] });
+  await (await dialogPromise).accept();
+  await restorePromise;
+  await expect(page.locator('#toast')).toContainText('読み込めませんでした');
+  await page.evaluate(() => { Storage.prototype.setItem = globalThis.__originalSetItem; });
+  expect(await state(page)).toEqual(current);
+  await page.click('[data-tab=list]');
+  await expect(page.locator('[data-edit-tx=keep]')).toBeVisible();
+  await expect(page.locator('[data-edit-tx=replacement]')).toHaveCount(0);
+});
+
 test('タブバーはスクロールしても画面下に固定される', async ({ page }) => {
   await seed(page, { ...base, txs: Array.from({ length: 40 }, (_, i) => ({ id: 't' + i, type: 'expense', amount: 100, date: `2026-09-${String((i % 28) + 1).padStart(2, '0')}`, category: 'food', walletId: 'cash', memo: '' })) });
   await page.click('[data-tab=list]');
@@ -251,6 +300,29 @@ test.describe('ログインとクラウド同期（Firebaseを代替して検証
     }, { remote: remoteTx.data && remoteTx, user: opts.user, accounts: opts.accounts });
   }
   const gate = (page) => page.locator('#login');
+
+  test('a failed cloud write remains pending and can be retried', async ({ page }) => {
+    await setup(page, { accounts: { 'a@example.com': { pw: 'correct-pass', uid: 'ua' } } });
+    await page.goto('/app.html');
+    await gate(page).locator('input[name=email]').fill('a@example.com');
+    await gate(page).locator('input[name=password]').fill('correct-pass');
+    await gate(page).locator('form button[type=submit]').click();
+    await expect(gate(page)).toBeHidden();
+    await expect.poll(() => page.evaluate(() => Sync.status)).toBe('synced');
+
+    await page.evaluate(() => { __fake.writes.length = 0; __fake.failCommits = 1; });
+    await page.click('#fab');
+    await page.fill('input[name=amount]', '500');
+    await page.selectOption('select[name=walletId]', 'cash');
+    await page.click('#txForm button[type=submit]');
+    const id = (await state(page)).txs.find((t) => t.amount === 500).id;
+    await expect.poll(() => page.evaluate(() => Sync.status)).toBe('error');
+    expect(await page.evaluate((txId) => __fake.docs.has(`t_${txId}`), id)).toBe(false);
+
+    await page.evaluate(() => Sync.push());
+    await expect.poll(() => page.evaluate(() => Sync.status)).toBe('synced');
+    expect(await page.evaluate((txId) => __fake.docs.has(`t_${txId}`), id)).toBe(true);
+  });
 
   test('未ログインの初回はログイン画面が出て、「ログインせずに使う」で閉じられる', async ({ page }) => {
     await setup(page);
@@ -476,6 +548,56 @@ test('支出の推移は6か月分を表示し、棒をタップするとその�
   await expect(page.locator('.trend-col.cur')).toContainText('¥3,000');
 });
 
+test('one-month dummy ledger reconciles balances, card settlement, and CSV export', async ({ page }) => {
+  await seed(page, {
+    wallets: [
+      { id: 'cash', name: 'Cash', initial: 20000 },
+      { id: 'bank', name: 'Bank', initial: 200000 },
+      { id: 'card', name: 'Card', initial: 0, kind: 'card', closingDay: 15, payDay: 10, payMonthOffset: 1, payWalletId: 'bank', notifyDays: 3 },
+    ],
+    txs: [
+      { id: 'prev', type: 'expense', amount: 5000, date: '2026-08-10', category: 'food', walletId: 'card', memo: 'previous cycle' },
+      { id: 'cash-food', type: 'expense', amount: 12000, date: '2026-09-03', category: 'food', walletId: 'cash', memo: 'groceries' },
+      { id: 'card-a', type: 'expense', amount: 4000, date: '2026-09-05', category: 'food', walletId: 'card', memo: 'card before close' },
+      { id: 'rent', type: 'expense', amount: 80000, date: '2026-09-27', category: 'house', walletId: 'bank', memo: 'rent' },
+      { id: 'salary', type: 'income', amount: 300000, date: '2026-09-25', category: 'salary', walletId: 'bank', memo: 'salary' },
+      { id: 'card-b', type: 'expense', amount: 6000, date: '2026-09-20', category: 'food', walletId: 'card', memo: 'card after close' },
+    ],
+    bills: [],
+    settings: { budget: 0, notify: false, lastNotified: '' },
+  });
+
+  expect(await page.evaluate(() => ({
+    cash: balance('cash'),
+    bank: balance('bank'),
+    card: balance('card'),
+    charges: [...cardCharges(walletOf('card')).entries()],
+  }))).toEqual({
+    cash: 8000,
+    bank: 420000,
+    card: -15000,
+    charges: [['2026-09-10', 5000], ['2026-10-10', 4000], ['2026-11-10', 6000]],
+  });
+
+  const settlement = page.locator('[data-pay]').first();
+  await expect(settlement).toBeVisible();
+  await settlement.click();
+  expect(await page.evaluate(() => ({
+    cash: balance('cash'),
+    bank: balance('bank'),
+    card: balance('card'),
+  }))).toEqual({ cash: 8000, bank: 415000, card: -10000 });
+
+  const settled = (await state(page)).txs.find((tx) => tx.settleKey === 'card:2026-09-10');
+  expect(settled).toMatchObject({ type: 'transfer', amount: 5000, walletId: 'bank', toWalletId: 'card' });
+
+  await page.click('[data-tab=wallet]');
+  const csv = await readDownload(page, () => page.click('[data-act=csv]'));
+  for (const expected of ['2026-09-03', '12000', '2026-09-05', '4000', '2026-09-20', '6000', '2026-09-25', '300000', '2026-09-27', '80000', '5000']) {
+    expect(csv).toContain(expected);
+  }
+});
+
 const cardBase = {
   wallets: [
     { id: 'cash', name: '現金', initial: 10000 },
@@ -634,7 +756,7 @@ test('.icsにカードの引き落としと年1回の予定が入る', async ({ 
   expect(ics).toContain('DTSTART;VALUE=DATE:20261005'); // 今月(9月)には無いので10月が最初
 });
 
-const fixture = (name) => new URL(`./fixtures/${name}`, import.meta.url).pathname;
+const fixture = (name) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 const stmtBase = { ...cardBase, txs: [], bills: [] };
 
 async function importFile(page, file) {
