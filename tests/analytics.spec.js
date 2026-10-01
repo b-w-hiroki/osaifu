@@ -8,6 +8,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('測定ID未設定なら GA を読み込まない', async ({ page }) => {
+  await page.addInitScript(() => { window.BIRDMAN_GA_TEST_ID = null; });
   const hits = [];
   page.on('request', (r) => { if (/googletagmanager|google-analytics/.test(r.url())) hits.push(r.url()); });
   await page.goto('/');
@@ -27,4 +28,15 @@ test('測定IDを設定すると gtag を読み込み、表示方法を付けて
   expect(cfg[1]).toBe('G-TEST123');
   expect(cfg[2]).toEqual({ display_mode: 'browser' });
   expect(hits.some((u) => u.includes('id=G-TEST123'))).toBe(true);
+});
+
+test('本番の設定: 発行された測定IDを使い、自動テストのアクセスは計測しない', async ({ page }) => {
+  const src = await (await page.request.get('/analytics.js')).text();
+  expect(src).toContain("'G-NBTDS8D5SJ'");
+  const hits = [];
+  page.on('request', (r) => { if (/googletagmanager|google-analytics/.test(r.url())) hits.push(r.url()); });
+  await page.goto('/');
+  await page.goto('/app.html');
+  await expect(page.locator('#title')).toBeVisible();
+  expect(hits).toEqual([]);
 });
