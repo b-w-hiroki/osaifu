@@ -183,8 +183,10 @@ test('restore cancellation preserves the current data', async ({ page }) => {
   const current = { ...base, txs: [{ id: 'keep', type: 'expense', amount: 321, date: '2026-09-01', category: 'food', walletId: 'cash', memo: 'keep' }] };
   await seed(page, current);
   await page.click('[data-tab=wallet]');
-  page.once('dialog', (dialog) => dialog.dismiss());
-  await restoreJson(page, { ...base, txs: [{ ...current.txs[0], id: 'replacement', amount: 999 }] });
+  const dialogPromise = page.waitForEvent('dialog');
+  const restorePromise = restoreJson(page, { ...base, txs: [{ ...current.txs[0], id: 'replacement', amount: 999 }] });
+  await (await dialogPromise).dismiss();
+  await restorePromise;
   expect(await state(page)).toEqual(current);
 });
 
@@ -199,8 +201,10 @@ test('restore storage failure preserves persistent and in-memory data', async ({
       return globalThis.__originalSetItem.call(this, name, value);
     };
   }, KEY);
-  page.once('dialog', (dialog) => dialog.accept());
-  await restoreJson(page, { ...base, txs: [{ ...current.txs[0], id: 'replacement', amount: 999 }] });
+  const dialogPromise = page.waitForEvent('dialog');
+  const restorePromise = restoreJson(page, { ...base, txs: [{ ...current.txs[0], id: 'replacement', amount: 999 }] });
+  await (await dialogPromise).accept();
+  await restorePromise;
   await expect(page.locator('#toast')).toContainText('読み込めませんでした');
   await page.evaluate(() => { Storage.prototype.setItem = globalThis.__originalSetItem; });
   expect(await state(page)).toEqual(current);
