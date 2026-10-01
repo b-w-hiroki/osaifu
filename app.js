@@ -1413,16 +1413,54 @@ function download(name, text, type) {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+const BACKUP_MAX_BYTES = 10 * 1024 * 1024;
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const validId = (v) => typeof v === 'string' && v.length > 0 && v.length <= 200;
+const validAmount = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+function validBackupDate(v) {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = parseYmd(v);
+  return !Number.isNaN(d.getTime()) && ymd(d) === v;
+}
+function uniqueIds(items) {
+  const ids = items.map((x) => x?.id);
+  return ids.every(validId) && new Set(ids).size === ids.length;
+}
+function prepareBackup(data) {
+  if (!isObject(data) || !Array.isArray(data.wallets) || !data.wallets.length || !Array.isArray(data.txs)) throw new Error('bad backup');
+  const bills = data.bills === undefined ? [] : data.bills;
+  if (!Array.isArray(bills) || !uniqueIds(data.wallets) || !uniqueIds(data.txs) || !uniqueIds(bills)) throw new Error('bad backup');
+  if (data.settings !== undefined && !isObject(data.settings)) throw new Error('bad backup');
+
+  const walletIds = new Set(data.wallets.map((w) => w.id));
+  for (const w of data.wallets) {
+    if (typeof w.name !== 'string' || !validAmount(w.initial)) throw new Error('bad wallet');
+    if (w.payWalletId !== undefined && (!validId(w.payWalletId) || !walletIds.has(w.payWalletId))) throw new Error('bad wallet');
+  }
+  for (const t of data.txs) {
+    if (!['expense', 'income', 'transfer'].includes(t.type) || !validAmount(t.amount) || !validBackupDate(t.date) || !walletIds.has(t.walletId)) throw new Error('bad transaction');
+    if (t.type === 'transfer' && (!walletIds.has(t.toWalletId) || t.toWalletId === t.walletId)) throw new Error('bad transfer');
+  }
+  for (const b of bills) {
+    if (typeof b.name !== 'string' || !validAmount(b.amount) || !walletIds.has(b.walletId)) throw new Error('bad bill');
+    if (!Number.isInteger(b.day) || b.day < 1 || b.day > 31) throw new Error('bad bill');
+  }
+  return { ...seed(), ...data, bills, settings: { ...seed().settings, ...(data.settings || {}) } };
+}
 function importJson() {
   const input = document.createElement('input');
   input.type = 'file'; input.accept = 'application/json,.json';
   input.onchange = async () => {
     try {
-      const data = JSON.parse(await input.files[0].text());
-      if (!Array.isArray(data.wallets) || !Array.isArray(data.txs)) throw new Error('bad');
+      const file = input.files[0];
+      if (!file || file.size > BACKUP_MAX_BYTES) throw new Error('bad file');
+      const next = prepareBackup(JSON.parse(await file.text()));
       if (!confirm('現在のデータを上書きして復元しますか？')) return;
-      S = { ...seed(), ...data, settings: { ...seed().settings, ...data.settings } };
-      save(); render(); toast('復元しました');
+      // localStorage.setItem is atomic. Keep memory untouched until persistence succeeds.
+      localStorage.setItem(KEY, JSON.stringify(next));
+      S = next;
+      Sync.push();
+      render(); toast('復元しました');
     } catch (e) { toast('ファイルを読み込めませんでした'); }
   };
   input.click();

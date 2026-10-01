@@ -142,12 +142,12 @@ const Sync = (() => {
     const { recs, push, del } = merge(local, base, remote);
     const changedLocally = canon(recs) !== canon(local);
     if (changedLocally) { applyRecords(S, recs); saveLocal(); }
-    remember(recs);
     ready = true;
     if (push.length || del.length) {
       setStatus('syncing');
-      write(recs, push, del).then(() => setStatus('synced')).catch(() => setStatus('error'));
+      write(recs, push, del).then(() => { remember(recs); setStatus('synced'); }).catch(() => setStatus('error'));
     } else {
+      remember(recs);
       setStatus(navigator.onLine === false ? 'offline' : 'synced');
     }
   }
@@ -167,9 +167,8 @@ const Sync = (() => {
     const pushIds = Object.keys(local).filter((id) => canon(local[id]) !== base[id]);
     const delIds = Object.keys(base).filter((id) => !local[id]);
     if (!pushIds.length && !delIds.length) return;
-    remember(local);
     setStatus('syncing');
-    write(local, pushIds, delIds).then(() => setStatus('synced')).catch(() => setStatus('error'));
+    write(local, pushIds, delIds).then(() => { remember(local); setStatus('synced'); }).catch(() => setStatus('error'));
   }
 
   async function onUser(u) {

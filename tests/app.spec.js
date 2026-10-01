@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import fs from 'fs';
+import { fileURLToPath } from 'node:url';
 
 const KEY = 'osaifu:v1';
 
@@ -164,6 +165,50 @@ test('バックアップを書き出して復元できる', async ({ page }) => 
   expect((await state(page)).txs[0].amount).toBe(999);
 });
 
+async function restoreJson(page, data) {
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-act=import]')]);
+  await chooser.setFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(data)) });
+}
+
+test('restore rejects invalid references and preserves the current data', async ({ page }) => {
+  const current = { ...base, txs: [{ id: 'keep', type: 'expense', amount: 321, date: '2026-09-01', category: 'food', walletId: 'cash', memo: 'keep' }] };
+  await seed(page, current);
+  await page.click('[data-tab=wallet]');
+  await restoreJson(page, { ...base, txs: [{ ...current.txs[0], id: 'bad', walletId: 'missing' }] });
+  await expect(page.locator('#toast')).toContainText('読み込めませんでした');
+  expect(await state(page)).toEqual(current);
+});
+
+test('restore cancellation preserves the current data', async ({ page }) => {
+  const current = { ...base, txs: [{ id: 'keep', type: 'expense', amount: 321, date: '2026-09-01', category: 'food', walletId: 'cash', memo: 'keep' }] };
+  await seed(page, current);
+  await page.click('[data-tab=wallet]');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await restoreJson(page, { ...base, txs: [{ ...current.txs[0], id: 'replacement', amount: 999 }] });
+  expect(await state(page)).toEqual(current);
+});
+
+test('restore storage failure preserves persistent and in-memory data', async ({ page }) => {
+  const current = { ...base, txs: [{ id: 'keep', type: 'expense', amount: 321, date: '2026-09-01', category: 'food', walletId: 'cash', memo: 'keep' }] };
+  await seed(page, current);
+  await page.click('[data-tab=wallet]');
+  await page.evaluate((key) => {
+    globalThis.__originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (name, value) {
+      if (name === key) throw new DOMException('injected quota failure', 'QuotaExceededError');
+      return globalThis.__originalSetItem.call(this, name, value);
+    };
+  }, KEY);
+  page.once('dialog', (dialog) => dialog.accept());
+  await restoreJson(page, { ...base, txs: [{ ...current.txs[0], id: 'replacement', amount: 999 }] });
+  await expect(page.locator('#toast')).toContainText('読み込めませんでした');
+  await page.evaluate(() => { Storage.prototype.setItem = globalThis.__originalSetItem; });
+  expect(await state(page)).toEqual(current);
+  await page.click('[data-tab=list]');
+  await expect(page.locator('[data-edit-tx=keep]')).toBeVisible();
+  await expect(page.locator('[data-edit-tx=replacement]')).toHaveCount(0);
+});
+
 test('タブバーはスクロールしても画面下に固定される', async ({ page }) => {
   await seed(page, { ...base, txs: Array.from({ length: 40 }, (_, i) => ({ id: 't' + i, type: 'expense', amount: 100, date: `2026-09-${String((i % 28) + 1).padStart(2, '0')}`, category: 'food', walletId: 'cash', memo: '' })) });
   await page.click('[data-tab=list]');
@@ -251,6 +296,29 @@ test.describe('ログインとクラウド同期（Firebaseを代替して検証
     }, { remote: remoteTx.data && remoteTx, user: opts.user, accounts: opts.accounts });
   }
   const gate = (page) => page.locator('#login');
+
+  test('a failed cloud write remains pending and can be retried', async ({ page }) => {
+    await setup(page, { accounts: { 'a@example.com': { pw: 'correct-pass', uid: 'ua' } } });
+    await page.goto('/app.html');
+    await gate(page).locator('input[name=email]').fill('a@example.com');
+    await gate(page).locator('input[name=password]').fill('correct-pass');
+    await gate(page).locator('form button[type=submit]').click();
+    await expect(gate(page)).toBeHidden();
+    await expect.poll(() => page.evaluate(() => Sync.status)).toBe('synced');
+
+    await page.evaluate(() => { __fake.writes.length = 0; __fake.failCommits = 1; });
+    await page.click('#fab');
+    await page.fill('input[name=amount]', '500');
+    await page.selectOption('select[name=walletId]', 'cash');
+    await page.click('#txForm button[type=submit]');
+    const id = (await state(page)).txs.find((t) => t.amount === 500).id;
+    await expect.poll(() => page.evaluate(() => Sync.status)).toBe('error');
+    expect(await page.evaluate((txId) => __fake.docs.has(`t_${txId}`), id)).toBe(false);
+
+    await page.evaluate(() => Sync.push());
+    await expect.poll(() => page.evaluate(() => Sync.status)).toBe('synced');
+    expect(await page.evaluate((txId) => __fake.docs.has(`t_${txId}`), id)).toBe(true);
+  });
 
   test('未ログインの初回はログイン画面が出て、「ログインせずに使う」で閉じられる', async ({ page }) => {
     await setup(page);
@@ -634,7 +702,7 @@ test('.icsにカードの引き落としと年1回の予定が入る', async ({ 
   expect(ics).toContain('DTSTART;VALUE=DATE:20261005'); // 今月(9月)には無いので10月が最初
 });
 
-const fixture = (name) => new URL(`./fixtures/${name}`, import.meta.url).pathname;
+const fixture = (name) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 const stmtBase = { ...cardBase, txs: [], bills: [] };
 
 async function importFile(page, file) {
