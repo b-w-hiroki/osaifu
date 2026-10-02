@@ -1,5 +1,5 @@
 // オフライン対応用のキャッシュ（アプリシェルのみ）
-const CACHE = 'osaifu-v18';
+const CACHE = 'osaifu-v20';
 const ASSETS = ['./', 'index.html', 'app.html', 'news.html', 'news.css', 'news-data.js', 'news-page.js', 'terms.html', 'privacy.html', 'styles.css', 'app.js', 'ads.js', 'analytics.js', 'sister-apps.js', 'sync.js', 'config.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
@@ -24,7 +24,7 @@ self.addEventListener('fetch', (e) => {
         caches.open(CACHE).then((c) => c.put(e.request, copy));
         return res;
       })
-      .catch(() => caches.match(e.request)),
+      .catch(() => caches.match(e.request, { ignoreSearch: true })),
   );
 });
 
