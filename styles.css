@@ -219,6 +219,8 @@ button { cursor: pointer; }
 .btn.danger { background: none; color: var(--expense); }
 .btn.block { width: 100%; }
 .btn.sm { padding: 7px 12px; font-size: 13px; }
+.btn.news-link { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; text-decoration: none; }
+.btn.news-link:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 .btn-row { display: flex; gap: 8px; }
 .btn-row > * { flex: 1; }
 
