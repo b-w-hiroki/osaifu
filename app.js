@@ -696,6 +696,10 @@ function walletView() {
       <a class="btn ghost sm news-link" href="./news.html">見る</a>
     </div>
     <div class="set-row">
+      <div class="row-main"><div class="t">birdman studio</div><div class="s">ほかのアプリを見る</div></div>
+      <a class="btn ghost sm news-link" href="https://birdman-studio.com/" target="_blank" rel="noopener noreferrer">見る</a>
+    </div>
+    <div class="set-row">
       <div class="row-main"><div class="t">全データ削除</div></div>
       <button class="btn danger sm" data-act="reset">削除</button>
     </div>
