@@ -41,6 +41,17 @@ test('初回は空の状態で案内が表示される', async ({ page }) => {
   await expect(page.getByText('まだ支出の記録がありません')).toBeVisible();
 });
 
+test('設定からブランドサイトへ安全に移動できる', async ({ page }) => {
+  await page.locator('[data-tab="wallet"]').click();
+  const link = page.locator('a[href="https://birdman-studio.com/"]');
+  await expect(link).toHaveCount(1);
+  await expect(link).toHaveAttribute('target', '_blank');
+  await expect(link).toHaveAttribute('rel', /noopener/);
+  const box = await link.boundingBox();
+  expect(box?.width).toBeGreaterThanOrEqual(44);
+  expect(box?.height).toBeGreaterThanOrEqual(44);
+});
+
 test('横スクロールが発生しない', async ({ page }) => {
   await seed(page, { ...base, bills: [{ id: 'b1', name: 'とても長い名前の支払いとても長い名前の支払い', amount: 1234567, day: 27, category: 'house', walletId: 'bank', notifyDays: 1 }] });
   for (const tab of ['home', 'cal', 'list', 'wallet']) {
