@@ -5,7 +5,7 @@ F.emit = () => F.listeners.forEach((cb) => cb(F.snap()));
 
 export const initializeApp = (cfg) => ({ cfg });
 export const getAuth = () => ({});
-export const onAuthStateChanged = (_a, cb) => { F.authCbs.push(cb); cb(F.user); return () => {}; };
+export const onAuthStateChanged = (_a, cb) => { F.authCbs.push(cb); setTimeout(() => cb(F.user), F.authDelay || 0); return () => {}; };
 export class GoogleAuthProvider {}
 export const signInWithPopup = async () => {
   F.user = { uid: 'u1', email: 'test@example.com' };

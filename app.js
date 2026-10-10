@@ -319,9 +319,15 @@ function placeAd(parent, spot) {
 
 /* ---------- login ---------- */
 const LOGIN_SKIP_KEY = 'osaifu:login-skipped';
+const LAUNCH_GUIDE_KEY = 'osaifu:launch-guide:v1';
 const LOGIN = { mode: 'login', busy: false, error: '', info: '' };
 const loginSkipped = () => { try { return localStorage.getItem(LOGIN_SKIP_KEY) === '1'; } catch (e) { return false; } };
 const setLoginSkipped = (on) => { try { if (on) localStorage.setItem(LOGIN_SKIP_KEY, '1'); else localStorage.removeItem(LOGIN_SKIP_KEY); } catch (e) { /* ignore */ } };
+const launchGuideSeen = () => {
+  try { return localStorage.getItem(LAUNCH_GUIDE_KEY) === '1' || loginSkipped() || !!localStorage.getItem(KEY); }
+  catch (e) { return loginSkipped(); }
+};
+const markLaunchGuideSeen = () => { try { localStorage.setItem(LAUNCH_GUIDE_KEY, '1'); } catch (e) { /* ignore */ } };
 const loginRequired = () => window.OSAIFU_REQUIRE_LOGIN === true;
 
 /** ログイン画面を出すか：Firebase設定済みで未ログイン、かつ（必須設定・設定画面から開いた・まだ「使わない」を選んでいない） */
@@ -332,13 +338,41 @@ function needLogin() {
 
 function renderLogin() {
   const el = $('#login');
-  const show = needLogin();
+  const mode = Sync.enabled && Sync.authState === 'unknown' ? 'restoring'
+    : (!launchGuideSeen() && Sync.authState !== 'in' ? 'welcome' : (needLogin() ? 'login' : ''));
+  const show = !!mode;
   const was = !el.hidden;
   el.hidden = !show;
-  if (show && !was) { LOGIN.error = ''; LOGIN.info = ''; paintLogin(); }
+  if (show && (!was || el.dataset.mode !== mode)) {
+    LOGIN.error = ''; LOGIN.info = '';
+    el.dataset.mode = mode;
+    if (mode === 'restoring') paintRestoring();
+    else if (mode === 'welcome') paintLaunchGuide();
+    else paintLogin();
+  }
   if (!show && was) el.innerHTML = '';
   const n = Sync.takeNotice();
-  if (n && show) { LOGIN.error = n; LOGIN.busy = false; paintLogin(); }
+  if (n && mode === 'login') { LOGIN.error = n; LOGIN.busy = false; paintLogin(); }
+}
+
+function paintRestoring() {
+  $('#login').innerHTML = `<div class="login-box restoring" role="status" aria-live="polite">
+    <div class="login-brand"><img src="icons/icon.svg" alt="" width="56" height="56"><h2>おさいふ</h2></div>
+    <span class="login-spinner" aria-hidden="true"></span><p>ログイン状態を確認しています…</p>
+  </div>`;
+}
+
+function paintLaunchGuide() {
+  const canGuest = !loginRequired();
+  $('#login').innerHTML = `<main class="login-box launch-intro" aria-labelledby="launchTitle">
+    <div class="login-brand"><img src="icons/icon.svg" alt="" width="72" height="72"><h2 id="launchTitle">おさいふ</h2></div>
+    <p class="launch-lead">収支も、財布も、毎月の支払いも。カレンダーでやさしく見渡せます。</p>
+    <div class="launch-points" aria-label="主な機能"><span>記録はかんたん</span><span>支払日を確認</span><span>バックアップ対応</span></div>
+    ${canGuest ? '<button class="btn block" type="button" data-launch="start">はじめる</button><small>この端末に保存して、ログインなしで使えます</small>' : ''}
+    <button class="btn ${canGuest ? 'ghost ' : ''}block" type="button" data-launch="login">ログイン${Sync.enabled ? 'して同期' : ''}</button>
+    ${Sync.enabled ? '' : '<p class="auth-notice">ログイン・クラウド同期は準備中です</p>'}
+    <button class="link muted-link" type="button" data-launch="about">アプリについて</button>
+  </main>`;
 }
 
 /** 入力中の欄を消さないよう、メールアドレスだけ引き継いで描き直す */
@@ -386,6 +420,10 @@ async function runLogin(fn) {
 }
 
 $('#login').addEventListener('click', async (e) => {
+  const launch = e.target.closest('[data-launch]')?.dataset.launch;
+  if (launch === 'start') { markLaunchGuideSeen(); setLoginSkipped(true); UI.forceLogin = false; return render(); }
+  if (launch === 'login') { markLaunchGuideSeen(); UI.forceLogin = false; return render(); }
+  if (launch === 'about') return openAbout();
   const act = e.target.closest('[data-login]')?.dataset.login;
   if (!act) return;
   if (act === 'google') return runLogin(() => Sync.signInGoogle());
@@ -696,6 +734,10 @@ function walletView() {
       <a class="btn ghost sm news-link" href="./news.html">見る</a>
     </div>
     <div class="set-row">
+      <div class="row-main"><div class="t">アプリについて</div><div class="s">できること・保存先</div></div>
+      <button class="btn ghost sm" data-act="about">見る</button>
+    </div>
+    <div class="set-row">
       <div class="row-main"><div class="t">birdman studio</div><div class="s">ほかのアプリを見る</div></div>
       <a class="btn ghost sm news-link" href="https://birdman-studio.com/" target="_blank" rel="noopener noreferrer">見る</a>
     </div>
@@ -724,6 +766,26 @@ function closeSheet() {
   lastFocus && lastFocus.focus?.();
 }
 sheet.addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeSheet(); });
+
+const ABOUT_HISTORY_KEY = 'osaifuAbout';
+function openAbout() {
+  const dialog = $('#aboutDialog');
+  if (!dialog || dialog.open) return;
+  history.pushState({ ...(history.state || {}), [ABOUT_HISTORY_KEY]: true }, '');
+  dialog.showModal();
+  $('#aboutClose').focus();
+}
+function closeAbout(fromHistory = false) {
+  const dialog = $('#aboutDialog');
+  if (dialog?.open) dialog.close();
+  if (!fromHistory && history.state?.[ABOUT_HISTORY_KEY]) history.back();
+}
+$('#aboutClose').addEventListener('click', () => closeAbout());
+$('#aboutDialog').addEventListener('cancel', (e) => { e.preventDefault(); closeAbout(); });
+$('#aboutDialog').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeAbout(); });
+window.addEventListener('popstate', () => {
+  if ($('#aboutDialog').open && !history.state?.[ABOUT_HISTORY_KEY]) closeAbout(true);
+});
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
 
 const walletOptions = (sel) => S.wallets.map((w) => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
@@ -1537,6 +1599,7 @@ document.addEventListener('click', (e) => {
     case 'import-csv': return pickStatement();
     case 'sync-in': UI.forceLogin = true; return render();
     case 'sync-out': return logout();
+    case 'about': return openAbout();
     case 'export': return download(`osaifu-backup-${todayStr()}.json`, JSON.stringify(S, null, 2), 'application/json');
     case 'import': return importJson();
     case 'reset':

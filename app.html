@@ -43,6 +43,21 @@
 
   <div id="login" class="login" hidden></div>
 
+  <dialog id="aboutDialog" class="about-dialog" aria-labelledby="aboutTitle">
+    <div class="about-card">
+      <img src="icons/icon.svg" alt="" width="64" height="64">
+      <h2 id="aboutTitle">おさいふについて</h2>
+      <p>毎日の収支と、財布・口座・毎月の支払いをひとつのカレンダーで見渡せる家計管理アプリです。</p>
+      <ul>
+        <li>ログインなしなら記録はこの端末だけに保存</li>
+        <li>ログインするとクラウドに同期し、複数端末で利用可能</li>
+        <li>バックアップの書き出し・復元にも対応</li>
+      </ul>
+      <div class="about-links"><a href="./privacy.html">プライバシーポリシー</a><a href="./terms.html">利用規約</a></div>
+      <button id="aboutClose" class="btn block" type="button">閉じる</button>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast" hidden></div>
 
   <script src="ads.js"></script>
