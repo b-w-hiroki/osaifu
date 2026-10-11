@@ -21,6 +21,8 @@ const data = {
 
 test.beforeEach(async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-09-28T10:00:00+09:00'));
+  // Advertising tests exercise the established login screen; launch.spec.js owns the one-time guide.
+  await page.addInitScript(() => localStorage.setItem('osaifu:launch-guide:v1', '1'));
   await page.route('**/config.js', (route) => route.fulfill({ body: 'window.OSAIFU_FIREBASE = null; window.OSAIFU_REQUIRE_LOGIN = false;', contentType: 'text/javascript' }));
   page.on('pageerror', (e) => { throw e; });
 });

@@ -9,6 +9,8 @@ test.beforeEach(async ({ page }) => {
   // 広告（i-mobile）へは通信しない
   await page.route('https://imp-adedge.i-mobile.co.jp/**', (route) => route.abort());
   await page.clock.setFixedTime(new Date('2026-09-28T10:00:00+09:00'));
+  // 既存機能のテストは1回限りの起動案内を見た後から開始する。案内自体は launch.spec.js で検証する。
+  await page.addInitScript(() => localStorage.setItem('osaifu:launch-guide:v1', '1'));
   // 本物の config.js（Firebase設定）に左右されないよう、既定は「未設定」。ログインのテストは後から上書きする
   await page.route('**/config.js', (route) => route.fulfill({ body: 'window.OSAIFU_FIREBASE = null; window.OSAIFU_REQUIRE_LOGIN = false;', contentType: 'text/javascript' }));
   page.on('pageerror', (e) => { throw e; });
@@ -306,9 +308,9 @@ test.describe('ログインとクラウド同期（Firebaseを代替して検証
       if (globalThis.__fake) return; // 再読み込み時はクラウドの内容を引き継ぐ（addInitScript は毎回走るため）
       globalThis.__fake = {
         docs: new Map([['t_remote1', o.remote]]), listeners: [], authCbs: [], writes: [], resets: [],
-        user: o.user || null, accounts: o.accounts || {},
+        user: o.user || null, accounts: o.accounts || {}, authDelay: o.authDelay || 0,
       };
-    }, { remote: remoteTx.data && remoteTx, user: opts.user, accounts: opts.accounts });
+    }, { remote: remoteTx.data && remoteTx, user: opts.user, accounts: opts.accounts, authDelay: opts.authDelay });
   }
   const gate = (page) => page.locator('#login');
 
@@ -483,9 +485,11 @@ test.describe('ログインとクラウド同期（Firebaseを代替して検証
   });
 
   test('前回ログインした端末は、画面を開き直してもログイン画面を出さない', async ({ page }) => {
-    await setup(page, { user: { uid: 'u1', email: 'test@example.com' } });
+    await setup(page, { user: { uid: 'u1', email: 'test@example.com' }, authDelay: 700 });
     await page.addInitScript(() => localStorage.setItem('osaifu:sync-on', 'true'));
     await page.goto('/app.html');
+    await expect(gate(page).getByRole('status')).toContainText('ログイン状態を確認しています');
+    await expect(gate(page).getByText('Googleでログイン')).toHaveCount(0);
     await expect(gate(page)).toBeHidden();
     await page.click('[data-tab=wallet]');
     await expect(page.locator('.set-row', { hasText: 'アカウント' })).toContainText('test@example.com');

@@ -366,6 +366,34 @@ button { cursor: pointer; }
 .login .link { justify-self: center; }
 .btn:disabled { opacity: .55; }
 
+.launch-intro { text-align: center; }
+.launch-intro .login-brand img { border-radius: 18px; box-shadow: 0 10px 28px rgb(160 94 45 / .2); }
+.launch-lead { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.75; }
+.launch-points { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.launch-points span { min-height: 44px; display: grid; place-items: center; padding: 7px 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12px; font-weight: 700; }
+.launch-intro small { margin-top: -8px; color: var(--muted); font-size: 11px; }
+.launch-intro > .btn, .launch-intro > .link { min-height: 48px; }
+.restoring { justify-items: center; text-align: center; }
+.restoring p { margin: 0; color: var(--muted); font-size: 14px; }
+.login-spinner { width: 28px; height: 28px; border: 3px solid var(--line); border-top-color: var(--primary); border-radius: 50%; animation: login-spin .8s linear infinite; }
+@keyframes login-spin { to { transform: rotate(360deg); } }
+
+.about-dialog { width: min(calc(100% - 32px), 420px); max-height: calc(100dvh - 32px); padding: 0; border: 0; border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: 0 24px 70px rgb(0 0 0 / .25); }
+.about-dialog::backdrop { background: rgb(20 18 15 / .55); backdrop-filter: blur(3px); }
+.about-card { padding: 24px; overflow-y: auto; text-align: center; }
+.about-card img { border-radius: 16px; }
+.about-card h2 { margin: 10px 0; }
+.about-card p, .about-card li { color: var(--muted); font-size: 14px; line-height: 1.7; text-align: left; }
+.about-card ul { margin: 12px 0; padding-left: 22px; }
+.about-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 18px; margin: 12px 0 18px; }
+.about-links a { min-height: 44px; display: inline-flex; align-items: center; color: var(--primary); }
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .login-box.launch-intro { margin: 0 auto; padding: 12px 0; gap: 8px; }
+  .launch-intro .login-brand { grid-template-columns: auto auto; align-items: center; justify-content: center; }
+  .launch-intro .login-brand img { width: 48px; height: 48px; }
+}
+
 /* ---------- 明細の取り込み ---------- */
 details.map { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--surface); }
 details.map summary { font-size: 13px; color: var(--muted); cursor: pointer; }
