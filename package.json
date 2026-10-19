@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "start": "npx --yes serve -l 8765 .",
-    "test": "playwright test"
+    "search-check": "node tests/search-discovery.mjs",
+    "test": "npm run search-check && playwright test"
   },
   "devDependencies": {
     "@playwright/test": "1.56.1"
