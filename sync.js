@@ -133,6 +133,7 @@ const Sync = (() => {
   }
 
   function onRemote(snap) {
+    if (typeof invalidLocalBackup !== 'undefined' && invalidLocalBackup !== null) { setStatus('error'); return; }
     const remote = {};
     for (const d of snap.docs) {
       const v = d.data();
@@ -141,7 +142,16 @@ const Sync = (() => {
     const local = toRecords(S);
     const { recs, push, del } = merge(local, base, remote);
     const changedLocally = canon(recs) !== canon(local);
-    if (changedLocally) { applyRecords(S, recs); saveLocal(); }
+    if (changedLocally) {
+      try {
+        const next = JSON.parse(JSON.stringify(S));
+        applyRecords(next, recs);
+        const checked = prepareBackup(next);
+        // Persist atomically before changing the in-memory state or sync baseline.
+        localStorage.setItem(KEY, JSON.stringify(checked));
+        S = checked;
+      } catch (error) { setStatus('error'); return; }
+    }
     ready = true;
     if (push.length || del.length) {
       setStatus('syncing');
@@ -162,6 +172,7 @@ const Sync = (() => {
 
   /** 端末で保存した後に呼ぶ：base との差分だけクラウドへ送る */
   function push() {
+    if (typeof invalidLocalBackup !== 'undefined' && invalidLocalBackup !== null) { setStatus('error'); return; }
     if (!fb || !user || !ready) return;
     const local = toRecords(S);
     const pushIds = Object.keys(local).filter((id) => canon(local[id]) !== base[id]);

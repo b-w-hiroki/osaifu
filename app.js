@@ -70,20 +70,76 @@ function seed() {
     settings: { budget: 0, notify: false, lastNotified: '' },
   };
 }
+const BACKUP_MAX_BYTES = 10 * 1024 * 1024;
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const validId = (v) => typeof v === 'string' && v.length > 0 && v.length <= 200;
+const validAmount = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+function validBackupDate(v) {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = parseYmd(v);
+  return !Number.isNaN(d.getTime()) && ymd(d) === v;
+}
+function uniqueIds(items) {
+  const ids = items.map((x) => x?.id);
+  return ids.every(validId) && new Set(ids).size === ids.length;
+}
+function prepareBackup(data) {
+  if (!isObject(data) || !Array.isArray(data.wallets) || !data.wallets.length || !Array.isArray(data.txs)) throw new Error('bad backup');
+  const bills = data.bills === undefined ? [] : data.bills;
+  if (!Array.isArray(bills) || !uniqueIds(data.wallets) || !uniqueIds(data.txs) || !uniqueIds(bills)) throw new Error('bad backup');
+  if (data.settings !== undefined && !isObject(data.settings)) throw new Error('bad backup');
+
+  if (data.settings?.budget !== undefined && !validAmount(data.settings.budget)) throw new Error('bad budget');
+  const walletIds = new Set(data.wallets.map((w) => w.id));
+  for (const w of data.wallets) {
+    if (typeof w.name !== 'string' || typeof w.initial !== 'number' || !Number.isFinite(w.initial)) throw new Error('bad wallet');
+    for (const field of ['closingDay','payDay']) if (w[field] !== undefined && (!Number.isInteger(w[field]) || w[field] < 1 || w[field] > 31)) throw new Error('bad card day');
+    if (w.payMonthOffset !== undefined && ![0,1,2].includes(w.payMonthOffset)) throw new Error('bad card offset');
+    if (w.notifyDays !== undefined && (!Number.isInteger(w.notifyDays) || w.notifyDays < 0 || w.notifyDays > 365)) throw new Error('bad notification');
+    if (w.payWalletId !== undefined && (!validId(w.payWalletId) || !walletIds.has(w.payWalletId))) throw new Error('bad wallet');
+  }
+  for (const t of data.txs) {
+    for (const key of ['memo','category','settleKey']) if (t[key] !== undefined && typeof t[key] !== 'string') throw new Error('bad transaction text');
+    if (!['expense', 'income', 'transfer'].includes(t.type) || !validAmount(t.amount) || !validBackupDate(t.date) || !walletIds.has(t.walletId)) throw new Error('bad transaction');
+    if (t.type === 'transfer' && (!walletIds.has(t.toWalletId) || t.toWalletId === t.walletId)) throw new Error('bad transfer');
+  }
+  for (const b of bills) {
+    for (const key of ['tag','category','freq']) if (b[key] !== undefined && typeof b[key] !== 'string') throw new Error('bad bill text');
+    if (typeof b.name !== 'string' || !validAmount(b.amount) || !walletIds.has(b.walletId)) throw new Error('bad bill');
+    if (!Number.isInteger(b.day) || b.day < 1 || b.day > 31) throw new Error('bad bill');
+  }
+  return { ...seed(), ...data, bills, settings: { ...seed().settings, ...(data.settings || {}) } };
+}
+
+let invalidLocalBackup = null;
 function load() {
+  let raw = null;
   try {
-    const s = JSON.parse(localStorage.getItem(KEY));
-    if (s && Array.isArray(s.wallets)) return { ...seed(), ...s, settings: { ...seed().settings, ...s.settings } };
-  } catch (e) { /* ignore */ }
+    raw = localStorage.getItem(KEY);
+    const s = JSON.parse(raw);
+    if (s) return prepareBackup(s);
+    if (raw !== null) throw new Error('invalid saved state');
+  } catch (e) { invalidLocalBackup = raw; }
   return seed();
 }
 let S = load();
 function saveLocal() {
-  try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('保存に失敗しました'); }
+  if (invalidLocalBackup !== null) { toast('保存済みデータを読み込めません。先にバックアップを書き出し、対応するデータを復元してください'); return false; }
+  try { localStorage.setItem(KEY, JSON.stringify(S)); return true; } catch (e) { toast('保存に失敗しました'); return false; }
 }
 function save() {
-  saveLocal();
+  if (!saveLocal()) return false;
   Sync.push();
+  return true;
+}
+
+// Keep the rendered state consistent with disk if clearing cannot be persisted.
+function resetStoredState(sync = false) {
+  const previous = S;
+  S = seed();
+  if (!saveLocal()) { S = previous; return false; }
+  if (sync) Sync.push();
+  return true;
 }
 
 const now = new Date();
@@ -447,15 +503,17 @@ $('#login').addEventListener('submit', (e) => {
 /** ログアウト：この端末のデータも片付ける（アカウントの記録はクラウドに残り、次回ログインで戻る） */
 async function logout() {
   const synced = Sync.status === 'synced';
-  const msg = synced
+  const msg = invalidLocalBackup !== null
+    ? 'ログアウトします。読み込めない保存済みデータは、この端末に残して保護します。'
+    : synced
     ? 'ログアウトします。この端末のデータは削除されます（クラウドの記録は、次回ログインで復元されます）。'
     : '同期が終わっていない変更があります。ログアウトするとこの端末のデータが削除され、未同期の変更は失われます。ログアウトしますか？';
   if (!confirm(msg)) return;
-  await Sync.signOut();
-  S = seed();
-  saveLocal();
+  try { await Sync.signOut(); } catch (e) { toast('ログアウトに失敗しました。端末のデータは削除していません'); return; }
+  const cleared = resetStoredState();
   UI.tab = 'home';
   render();
+  if (!cleared) toast('ログアウトしましたが、端末のデータは削除できず残っています。バックアップを書き出してください');
 }
 
 // 別のアカウントのデータが端末に残っていた時（ログイン期限切れ後など）は、混ざらないよう確認する
@@ -463,9 +521,7 @@ Sync.setHandlers({
   onSwitch: () => {
     const hasData = S.txs.length || S.bills.length;
     if (hasData && !confirm('この端末には別のアカウントのデータが残っています。削除して、ログインしたアカウントのデータに切り替えますか？（キャンセルするとログアウトします）')) return false;
-    S = seed();
-    saveLocal();
-    return true;
+    return resetStoredState();
   },
 });
 
@@ -476,9 +532,9 @@ function billRow(it) {
   return `
   <div class="row-item">
     ${mark(catOf(type, it.bill.category))}
-    <div class="row-main" data-edit-bill="${it.bill.id}"><div class="t"><span>${esc(it.bill.name)}</span>${dueLabel(it)}</div>${it.bill.tag || freqLabel(it.bill) ? `<div class="s">${it.bill.tag || freqLabel(it.bill)}</div>` : ''}</div>
+    <div class="row-main" data-edit-bill="${esc(it.bill.id)}"><div class="t"><span>${esc(it.bill.name)}</span>${dueLabel(it)}</div>${it.bill.tag || freqLabel(it.bill) ? `<div class="s">${esc(it.bill.tag || freqLabel(it.bill))}</div>` : ''}</div>
     <div class="amt num ${type === 'income' ? 'income' : ''}">${!it.tx && it.bill.variable ? '<small class="muted">約</small>' : ''}${yen(amount)}</div>
-    <button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${it.bill.id}">${it.tx ? '済' : it.bill.kind === 'card' ? '引落' : type === 'income' ? '受取' : '支払う'}</button>
+    <button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${esc(it.bill.id)}">${it.tx ? '済' : it.bill.kind === 'card' ? '引落' : type === 'income' ? '受取' : '支払う'}</button>
   </div>`;
 }
 
@@ -489,7 +545,7 @@ function txRow(t) {
   const cls = t.type === 'income' ? 'income' : isTr ? 'muted' : '';
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   return `
-  <button class="row-item" data-edit-tx="${t.id}">
+  <button class="row-item" data-edit-tx="${esc(t.id)}">
     ${mark(c)}
     <div class="row-main"><div class="t"><span>${esc(title)}</span></div></div>
     <div class="amt num ${cls}">${sign}${yen(t.amount)}</div>
@@ -547,7 +603,7 @@ function homeView() {
   <section class="card">
     <div class="card-head"><h2>財布</h2><span class="head-val num">${yen(totalBal)}</span></div>
     <div class="wallet-strip">
-      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="wchip" data-edit-wallet="${w.id}"><span class="n">${esc(w.name)}</span><b class="num ${b < 0 ? 'expense' : ''}">${yen(b)}</b></button>`; }).join('')}
+      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="wchip" data-edit-wallet="${esc(w.id)}"><span class="n">${esc(w.name)}</span><b class="num ${b < 0 ? 'expense' : ''}">${yen(b)}</b></button>`; }).join('')}
     </div>
     ${lack.map((x) => `<div class="lack">${esc(x.w.name)}：今月の引き落とし ${yen(x.need)} に対して ${yen(x.short)} 不足</div>`).join('')}
   </section>
@@ -696,7 +752,7 @@ function walletView() {
   <section class="card">
     <div class="card-head"><h2>財布</h2><button class="link" data-act="new-wallet">＋ 追加</button></div>
     <div class="rows">
-      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="row-item" data-edit-wallet="${w.id}">${walletMark(w)}<div class="row-main"><div class="t"><span>${esc(w.name)}</span></div>${isCard(w) ? `<div class="s">${w.closingDay === 31 ? '月末' : w.closingDay + '日'}締め・${['当月', '翌月', '翌々月'][w.payMonthOffset ?? 1]}${w.payDay === 31 ? '末' : w.payDay + '日'}引き落とし</div>` : ''}</div><div class="amt num ${b < 0 ? 'expense' : ''}">${yen(b)}</div></button>`; }).join('')}
+      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="row-item" data-edit-wallet="${esc(w.id)}">${walletMark(w)}<div class="row-main"><div class="t"><span>${esc(w.name)}</span></div>${isCard(w) ? `<div class="s">${esc(w.closingDay === 31 ? '月末' : w.closingDay + '日')}締め・${['当月', '翌月', '翌々月'][w.payMonthOffset ?? 1]}${esc(w.payDay === 31 ? '末' : w.payDay + '日')}引き落とし</div>` : ''}</div><div class="amt num ${b < 0 ? 'expense' : ''}">${yen(b)}</div></button>`; }).join('')}
     </div>
     <button class="btn ghost block sm" data-act="transfer" style="margin-top:8px">振替</button>
   </section>
@@ -788,7 +844,7 @@ window.addEventListener('popstate', () => {
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
 
-const walletOptions = (sel) => S.wallets.map((w) => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+const walletOptions = (sel) => S.wallets.map((w) => `<option value="${esc(w.id)}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
 const catGrid = (type, sel) => `<div class="cat-grid">${CATS[type].map((c) => `
   <label><input type="radio" name="category" value="${c.id}" ${c.id === sel ? 'checked' : ''}><span class="c"><b style="--c:${c.color}">${c.icon}</b>${c.name}</span></label>`).join('')}</div>`;
 const parseAmount = (v) => Math.round(Number(String(v).replace(/[^\d.]/g, '')) || 0);
@@ -974,7 +1030,7 @@ function walletSheet(w) {
           <div class="field"><label>引き落とし月</label><select class="input" name="payMonthOffset">${[[1, '締め月の翌月'], [2, '締め月の翌々月'], [0, '締め月の当月']].map(([v, l]) => `<option value="${v}" ${v === Number(x.payMonthOffset) ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
           <div class="field"><label>お知らせ</label><select class="input" name="notifyDays">${NOTIFY_OPTS.map(([v, l]) => `<option value="${v}" ${v === Number(x.notifyDays) ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         </div>
-        <div class="field"><label>引き落とし口座</label><select class="input" name="payWalletId">${assets().map((v) => `<option value="${v.id}" ${v.id === x.payWalletId ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>`
+        <div class="field"><label>引き落とし口座</label><select class="input" name="payWalletId">${assets().map((v) => `<option value="${esc(v.id)}" ${v.id === x.payWalletId ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>`
       : `<div class="field"><label>現在の残高</label><input class="input num" name="balance" inputmode="numeric" value="${w ? balance(w.id) : ''}" placeholder="0"></div>`}
       <button class="btn block" type="submit">${w ? '更新する' : '追加する'}</button>
       ${w ? '<button class="btn danger block" type="button" data-del>この財布を削除</button>' : ''}
@@ -1433,7 +1489,7 @@ function showImport() {
     <div class="form">
       <h3>明細を取り込む</h3>
       <div class="muted" style="font-size:12px">${esc(x.name)}</div>
-      <div class="field"><label>取り込み先</label><select class="input" data-imp-wallet>${S.wallets.map((w) => `<option value="${w.id}" ${w.id === x.walletId ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>取り込み先</label><select class="input" data-imp-wallet>${S.wallets.map((w) => `<option value="${esc(w.id)}" ${w.id === x.walletId ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select></div>
       ${split ? '' : `<div class="field"><label>金額の見方</label><select class="input" data-imp-mode>
         <option value="expensePositive" ${x.mode === 'expensePositive' ? 'selected' : ''}>プラスの数字が支出（カード明細など）</option>
         <option value="expenseNegative" ${x.mode === 'expenseNegative' ? 'selected' : ''}>マイナスの数字が支出（入出金が1列の銀行など）</option></select></div>`}
@@ -1483,40 +1539,6 @@ function download(name, text, type) {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-const BACKUP_MAX_BYTES = 10 * 1024 * 1024;
-const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-const validId = (v) => typeof v === 'string' && v.length > 0 && v.length <= 200;
-const validAmount = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
-function validBackupDate(v) {
-  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
-  const d = parseYmd(v);
-  return !Number.isNaN(d.getTime()) && ymd(d) === v;
-}
-function uniqueIds(items) {
-  const ids = items.map((x) => x?.id);
-  return ids.every(validId) && new Set(ids).size === ids.length;
-}
-function prepareBackup(data) {
-  if (!isObject(data) || !Array.isArray(data.wallets) || !data.wallets.length || !Array.isArray(data.txs)) throw new Error('bad backup');
-  const bills = data.bills === undefined ? [] : data.bills;
-  if (!Array.isArray(bills) || !uniqueIds(data.wallets) || !uniqueIds(data.txs) || !uniqueIds(bills)) throw new Error('bad backup');
-  if (data.settings !== undefined && !isObject(data.settings)) throw new Error('bad backup');
-
-  const walletIds = new Set(data.wallets.map((w) => w.id));
-  for (const w of data.wallets) {
-    if (typeof w.name !== 'string' || !validAmount(w.initial)) throw new Error('bad wallet');
-    if (w.payWalletId !== undefined && (!validId(w.payWalletId) || !walletIds.has(w.payWalletId))) throw new Error('bad wallet');
-  }
-  for (const t of data.txs) {
-    if (!['expense', 'income', 'transfer'].includes(t.type) || !validAmount(t.amount) || !validBackupDate(t.date) || !walletIds.has(t.walletId)) throw new Error('bad transaction');
-    if (t.type === 'transfer' && (!walletIds.has(t.toWalletId) || t.toWalletId === t.walletId)) throw new Error('bad transfer');
-  }
-  for (const b of bills) {
-    if (typeof b.name !== 'string' || !validAmount(b.amount) || !walletIds.has(b.walletId)) throw new Error('bad bill');
-    if (!Number.isInteger(b.day) || b.day < 1 || b.day > 31) throw new Error('bad bill');
-  }
-  return { ...seed(), ...data, bills, settings: { ...seed().settings, ...(data.settings || {}) } };
-}
 function importJson() {
   const input = document.createElement('input');
   input.type = 'file'; input.accept = 'application/json,.json';
@@ -1529,6 +1551,7 @@ function importJson() {
       // localStorage.setItem is atomic. Keep memory untouched until persistence succeeds.
       localStorage.setItem(KEY, JSON.stringify(next));
       S = next;
+      invalidLocalBackup = null;
       Sync.push();
       render(); toast('復元しました');
     } catch (e) { toast('ファイルを読み込めませんでした'); }
@@ -1600,10 +1623,10 @@ document.addEventListener('click', (e) => {
     case 'sync-in': UI.forceLogin = true; return render();
     case 'sync-out': return logout();
     case 'about': return openAbout();
-    case 'export': return download(`osaifu-backup-${todayStr()}.json`, JSON.stringify(S, null, 2), 'application/json');
+    case 'export': return download(`osaifu-backup-${todayStr()}.json`, invalidLocalBackup !== null ? invalidLocalBackup : JSON.stringify(S, null, 2), 'application/json');
     case 'import': return importJson();
     case 'reset':
-      if (confirm(`すべてのデータを削除します${Sync.status !== 'signedOut' && Sync.enabled ? '（クラウドの記録も削除されます）' : ''}。元に戻せません。よろしいですか？`)) { S = seed(); save(); render(); toast('削除しました'); }
+      if (confirm(`すべてのデータを削除します${Sync.status !== 'signedOut' && Sync.enabled ? '（クラウドの記録も削除されます）' : ''}。元に戻せません。よろしいですか？`)) { if (resetStoredState(true)) { render(); toast('削除しました'); } }
       return;
   }
 });
@@ -1627,3 +1650,5 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 }
 render();
 checkDue();
+
+if (invalidLocalBackup !== null) toast('保存済みデータを読み込めません。元データは保持し、上書きを停止しています');
