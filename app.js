@@ -476,9 +476,9 @@ function billRow(it) {
   return `
   <div class="row-item">
     ${mark(catOf(type, it.bill.category))}
-    <div class="row-main" data-edit-bill="${it.bill.id}"><div class="t"><span>${esc(it.bill.name)}</span>${dueLabel(it)}</div>${it.bill.tag || freqLabel(it.bill) ? `<div class="s">${it.bill.tag || freqLabel(it.bill)}</div>` : ''}</div>
+    <div class="row-main" data-edit-bill="${esc(it.bill.id)}"><div class="t"><span>${esc(it.bill.name)}</span>${dueLabel(it)}</div>${it.bill.tag || freqLabel(it.bill) ? `<div class="s">${esc(it.bill.tag || freqLabel(it.bill))}</div>` : ''}</div>
     <div class="amt num ${type === 'income' ? 'income' : ''}">${!it.tx && it.bill.variable ? '<small class="muted">約</small>' : ''}${yen(amount)}</div>
-    <button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${it.bill.id}">${it.tx ? '済' : it.bill.kind === 'card' ? '引落' : type === 'income' ? '受取' : '支払う'}</button>
+    <button class="pay-btn ${it.tx ? 'done' : ''}" data-pay="${esc(it.bill.id)}">${it.tx ? '済' : it.bill.kind === 'card' ? '引落' : type === 'income' ? '受取' : '支払う'}</button>
   </div>`;
 }
 
@@ -489,7 +489,7 @@ function txRow(t) {
   const cls = t.type === 'income' ? 'income' : isTr ? 'muted' : '';
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   return `
-  <button class="row-item" data-edit-tx="${t.id}">
+  <button class="row-item" data-edit-tx="${esc(t.id)}">
     ${mark(c)}
     <div class="row-main"><div class="t"><span>${esc(title)}</span></div></div>
     <div class="amt num ${cls}">${sign}${yen(t.amount)}</div>
@@ -547,7 +547,7 @@ function homeView() {
   <section class="card">
     <div class="card-head"><h2>財布</h2><span class="head-val num">${yen(totalBal)}</span></div>
     <div class="wallet-strip">
-      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="wchip" data-edit-wallet="${w.id}"><span class="n">${esc(w.name)}</span><b class="num ${b < 0 ? 'expense' : ''}">${yen(b)}</b></button>`; }).join('')}
+      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="wchip" data-edit-wallet="${esc(w.id)}"><span class="n">${esc(w.name)}</span><b class="num ${b < 0 ? 'expense' : ''}">${yen(b)}</b></button>`; }).join('')}
     </div>
     ${lack.map((x) => `<div class="lack">${esc(x.w.name)}：今月の引き落とし ${yen(x.need)} に対して ${yen(x.short)} 不足</div>`).join('')}
   </section>
@@ -696,7 +696,7 @@ function walletView() {
   <section class="card">
     <div class="card-head"><h2>財布</h2><button class="link" data-act="new-wallet">＋ 追加</button></div>
     <div class="rows">
-      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="row-item" data-edit-wallet="${w.id}">${walletMark(w)}<div class="row-main"><div class="t"><span>${esc(w.name)}</span></div>${isCard(w) ? `<div class="s">${w.closingDay === 31 ? '月末' : w.closingDay + '日'}締め・${['当月', '翌月', '翌々月'][w.payMonthOffset ?? 1]}${w.payDay === 31 ? '末' : w.payDay + '日'}引き落とし</div>` : ''}</div><div class="amt num ${b < 0 ? 'expense' : ''}">${yen(b)}</div></button>`; }).join('')}
+      ${S.wallets.map((w) => { const b = balance(w.id); return `<button class="row-item" data-edit-wallet="${esc(w.id)}">${walletMark(w)}<div class="row-main"><div class="t"><span>${esc(w.name)}</span></div>${isCard(w) ? `<div class="s">${esc(w.closingDay === 31 ? '月末' : w.closingDay + '日')}締め・${['当月', '翌月', '翌々月'][w.payMonthOffset ?? 1]}${esc(w.payDay === 31 ? '末' : w.payDay + '日')}引き落とし</div>` : ''}</div><div class="amt num ${b < 0 ? 'expense' : ''}">${yen(b)}</div></button>`; }).join('')}
     </div>
     <button class="btn ghost block sm" data-act="transfer" style="margin-top:8px">振替</button>
   </section>
@@ -788,7 +788,7 @@ window.addEventListener('popstate', () => {
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
 
-const walletOptions = (sel) => S.wallets.map((w) => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+const walletOptions = (sel) => S.wallets.map((w) => `<option value="${esc(w.id)}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
 const catGrid = (type, sel) => `<div class="cat-grid">${CATS[type].map((c) => `
   <label><input type="radio" name="category" value="${c.id}" ${c.id === sel ? 'checked' : ''}><span class="c"><b style="--c:${c.color}">${c.icon}</b>${c.name}</span></label>`).join('')}</div>`;
 const parseAmount = (v) => Math.round(Number(String(v).replace(/[^\d.]/g, '')) || 0);
@@ -974,7 +974,7 @@ function walletSheet(w) {
           <div class="field"><label>引き落とし月</label><select class="input" name="payMonthOffset">${[[1, '締め月の翌月'], [2, '締め月の翌々月'], [0, '締め月の当月']].map(([v, l]) => `<option value="${v}" ${v === Number(x.payMonthOffset) ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
           <div class="field"><label>お知らせ</label><select class="input" name="notifyDays">${NOTIFY_OPTS.map(([v, l]) => `<option value="${v}" ${v === Number(x.notifyDays) ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         </div>
-        <div class="field"><label>引き落とし口座</label><select class="input" name="payWalletId">${assets().map((v) => `<option value="${v.id}" ${v.id === x.payWalletId ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>`
+        <div class="field"><label>引き落とし口座</label><select class="input" name="payWalletId">${assets().map((v) => `<option value="${esc(v.id)}" ${v.id === x.payWalletId ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>`
       : `<div class="field"><label>現在の残高</label><input class="input num" name="balance" inputmode="numeric" value="${w ? balance(w.id) : ''}" placeholder="0"></div>`}
       <button class="btn block" type="submit">${w ? '更新する' : '追加する'}</button>
       ${w ? '<button class="btn danger block" type="button" data-del>この財布を削除</button>' : ''}
@@ -1433,7 +1433,7 @@ function showImport() {
     <div class="form">
       <h3>明細を取り込む</h3>
       <div class="muted" style="font-size:12px">${esc(x.name)}</div>
-      <div class="field"><label>取り込み先</label><select class="input" data-imp-wallet>${S.wallets.map((w) => `<option value="${w.id}" ${w.id === x.walletId ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>取り込み先</label><select class="input" data-imp-wallet>${S.wallets.map((w) => `<option value="${esc(w.id)}" ${w.id === x.walletId ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select></div>
       ${split ? '' : `<div class="field"><label>金額の見方</label><select class="input" data-imp-mode>
         <option value="expensePositive" ${x.mode === 'expensePositive' ? 'selected' : ''}>プラスの数字が支出（カード明細など）</option>
         <option value="expenseNegative" ${x.mode === 'expenseNegative' ? 'selected' : ''}>マイナスの数字が支出（入出金が1列の銀行など）</option></select></div>`}
