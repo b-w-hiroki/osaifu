@@ -92,7 +92,7 @@ function prepareBackup(data) {
   if (data.settings?.budget !== undefined && !validAmount(data.settings.budget)) throw new Error('bad budget');
   const walletIds = new Set(data.wallets.map((w) => w.id));
   for (const w of data.wallets) {
-    if (typeof w.name !== 'string' || !validAmount(w.initial)) throw new Error('bad wallet');
+    if (typeof w.name !== 'string' || typeof w.initial !== 'number' || !Number.isFinite(w.initial)) throw new Error('bad wallet');
     for (const field of ['closingDay','payDay']) if (w[field] !== undefined && (!Number.isInteger(w[field]) || w[field] < 1 || w[field] > 31)) throw new Error('bad card day');
     if (w.payMonthOffset !== undefined && ![0,1,2].includes(w.payMonthOffset)) throw new Error('bad card offset');
     if (w.notifyDays !== undefined && (!Number.isInteger(w.notifyDays) || w.notifyDays < 0 || w.notifyDays > 365)) throw new Error('bad notification');
@@ -111,20 +111,35 @@ function prepareBackup(data) {
   return { ...seed(), ...data, bills, settings: { ...seed().settings, ...(data.settings || {}) } };
 }
 
+let invalidLocalBackup = null;
 function load() {
+  let raw = null;
   try {
-    const s = JSON.parse(localStorage.getItem(KEY));
+    raw = localStorage.getItem(KEY);
+    const s = JSON.parse(raw);
     if (s) return prepareBackup(s);
-  } catch (e) { /* ignore */ }
+    if (raw !== null) throw new Error('invalid saved state');
+  } catch (e) { invalidLocalBackup = raw; }
   return seed();
 }
 let S = load();
 function saveLocal() {
-  try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('保存に失敗しました'); }
+  if (invalidLocalBackup !== null) { toast('保存済みデータを読み込めません。先にバックアップを書き出し、対応するデータを復元してください'); return false; }
+  try { localStorage.setItem(KEY, JSON.stringify(S)); return true; } catch (e) { toast('保存に失敗しました'); return false; }
 }
 function save() {
-  saveLocal();
+  if (!saveLocal()) return false;
   Sync.push();
+  return true;
+}
+
+// Keep the rendered state consistent with disk if clearing cannot be persisted.
+function resetStoredState(sync = false) {
+  const previous = S;
+  S = seed();
+  if (!saveLocal()) { S = previous; return false; }
+  if (sync) Sync.push();
+  return true;
 }
 
 const now = new Date();
@@ -488,15 +503,17 @@ $('#login').addEventListener('submit', (e) => {
 /** ログアウト：この端末のデータも片付ける（アカウントの記録はクラウドに残り、次回ログインで戻る） */
 async function logout() {
   const synced = Sync.status === 'synced';
-  const msg = synced
+  const msg = invalidLocalBackup !== null
+    ? 'ログアウトします。読み込めない保存済みデータは、この端末に残して保護します。'
+    : synced
     ? 'ログアウトします。この端末のデータは削除されます（クラウドの記録は、次回ログインで復元されます）。'
     : '同期が終わっていない変更があります。ログアウトするとこの端末のデータが削除され、未同期の変更は失われます。ログアウトしますか？';
   if (!confirm(msg)) return;
-  await Sync.signOut();
-  S = seed();
-  saveLocal();
+  try { await Sync.signOut(); } catch (e) { toast('ログアウトに失敗しました。端末のデータは削除していません'); return; }
+  const cleared = resetStoredState();
   UI.tab = 'home';
   render();
+  if (!cleared) toast('ログアウトしましたが、端末のデータは削除できず残っています。バックアップを書き出してください');
 }
 
 // 別のアカウントのデータが端末に残っていた時（ログイン期限切れ後など）は、混ざらないよう確認する
@@ -504,9 +521,7 @@ Sync.setHandlers({
   onSwitch: () => {
     const hasData = S.txs.length || S.bills.length;
     if (hasData && !confirm('この端末には別のアカウントのデータが残っています。削除して、ログインしたアカウントのデータに切り替えますか？（キャンセルするとログアウトします）')) return false;
-    S = seed();
-    saveLocal();
-    return true;
+    return resetStoredState();
   },
 });
 
@@ -1237,7 +1252,6 @@ function exportIcs() {
     );
   };
   for (const b of bills) {
-    for (const key of ['tag','category','freq']) if (b[key] !== undefined && typeof b[key] !== 'string') throw new Error('bad bill text');
     event({
       uid: b.id, day: b.day, notifyDays: b.notifyDays, every: Number(b.every) || 1, occurs: (y, m) => billOccurs(b, y, m),
       summary: `${b.name} ${b.variable ? '約' : ''}${yen(b.amount)}${billType(b) === 'income' ? '（入金）' : ''}`,
@@ -1537,6 +1551,7 @@ function importJson() {
       // localStorage.setItem is atomic. Keep memory untouched until persistence succeeds.
       localStorage.setItem(KEY, JSON.stringify(next));
       S = next;
+      invalidLocalBackup = null;
       Sync.push();
       render(); toast('復元しました');
     } catch (e) { toast('ファイルを読み込めませんでした'); }
@@ -1608,10 +1623,10 @@ document.addEventListener('click', (e) => {
     case 'sync-in': UI.forceLogin = true; return render();
     case 'sync-out': return logout();
     case 'about': return openAbout();
-    case 'export': return download(`osaifu-backup-${todayStr()}.json`, JSON.stringify(S, null, 2), 'application/json');
+    case 'export': return download(`osaifu-backup-${todayStr()}.json`, invalidLocalBackup !== null ? invalidLocalBackup : JSON.stringify(S, null, 2), 'application/json');
     case 'import': return importJson();
     case 'reset':
-      if (confirm(`すべてのデータを削除します${Sync.status !== 'signedOut' && Sync.enabled ? '（クラウドの記録も削除されます）' : ''}。元に戻せません。よろしいですか？`)) { S = seed(); save(); render(); toast('削除しました'); }
+      if (confirm(`すべてのデータを削除します${Sync.status !== 'signedOut' && Sync.enabled ? '（クラウドの記録も削除されます）' : ''}。元に戻せません。よろしいですか？`)) { if (resetStoredState(true)) { render(); toast('削除しました'); } }
       return;
   }
 });
@@ -1635,3 +1650,5 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 }
 render();
 checkDue();
+
+if (invalidLocalBackup !== null) toast('保存済みデータを読み込めません。元データは保持し、上書きを停止しています');
