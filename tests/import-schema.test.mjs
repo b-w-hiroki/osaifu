@@ -1,0 +1,12 @@
+import {readFileSync} from 'node:fs';
+import {runInNewContext} from 'node:vm';
+import assert from 'node:assert/strict';
+import test from 'node:test';
+const src=readFileSync('app.js','utf8');
+const block=src.slice(src.indexOf('const BACKUP_MAX_BYTES'),src.indexOf('function load()'));
+const parse=runInNewContext(block+';prepareBackup',{seed:()=>({wallets:[],txs:[],bills:[],settings:{budget:0}}),parseYmd:s=>new Date(s+'T00:00:00Z'),ymd:d=>d.toISOString().slice(0,10)});
+const good=()=>({wallets:[{id:'cash',name:'現金',initial:0}],txs:[]});
+test('legacy backup without bills/settings accepted',()=>assert.equal(parse(good()).bills.length,0));
+test('bad card day and text fields rejected',()=>{let d=good();d.wallets[0].payDay='<img>';assert.throws(()=>parse(d));d=good();d.txs=[{id:'t',walletId:'cash',date:'2026-11-09',type:'expense',amount:10,memo:{}}];assert.throws(()=>parse(d))});
+test('invalid budget rejected',()=>{const d=good();d.settings={budget:'bad'};assert.throws(()=>parse(d))});
+test('remote state is persisted before assignment',()=>{const s=readFileSync('sync.js','utf8');const a=s.indexOf('const checked = prepareBackup(next)');assert.ok(a>=0);assert.ok(s.indexOf('localStorage.setItem(KEY',a)<s.indexOf('S = checked',a))});

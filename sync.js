@@ -141,7 +141,16 @@ const Sync = (() => {
     const local = toRecords(S);
     const { recs, push, del } = merge(local, base, remote);
     const changedLocally = canon(recs) !== canon(local);
-    if (changedLocally) { applyRecords(S, recs); saveLocal(); }
+    if (changedLocally) {
+      try {
+        const next = JSON.parse(JSON.stringify(S));
+        applyRecords(next, recs);
+        const checked = prepareBackup(next);
+        // Persist atomically before changing the in-memory state or sync baseline.
+        localStorage.setItem(KEY, JSON.stringify(checked));
+        S = checked;
+      } catch (error) { setStatus('error'); return; }
+    }
     ready = true;
     if (push.length || del.length) {
       setStatus('syncing');

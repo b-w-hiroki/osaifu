@@ -70,10 +70,51 @@ function seed() {
     settings: { budget: 0, notify: false, lastNotified: '' },
   };
 }
+const BACKUP_MAX_BYTES = 10 * 1024 * 1024;
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const validId = (v) => typeof v === 'string' && v.length > 0 && v.length <= 200;
+const validAmount = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+function validBackupDate(v) {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = parseYmd(v);
+  return !Number.isNaN(d.getTime()) && ymd(d) === v;
+}
+function uniqueIds(items) {
+  const ids = items.map((x) => x?.id);
+  return ids.every(validId) && new Set(ids).size === ids.length;
+}
+function prepareBackup(data) {
+  if (!isObject(data) || !Array.isArray(data.wallets) || !data.wallets.length || !Array.isArray(data.txs)) throw new Error('bad backup');
+  const bills = data.bills === undefined ? [] : data.bills;
+  if (!Array.isArray(bills) || !uniqueIds(data.wallets) || !uniqueIds(data.txs) || !uniqueIds(bills)) throw new Error('bad backup');
+  if (data.settings !== undefined && !isObject(data.settings)) throw new Error('bad backup');
+
+  if (data.settings?.budget !== undefined && !validAmount(data.settings.budget)) throw new Error('bad budget');
+  const walletIds = new Set(data.wallets.map((w) => w.id));
+  for (const w of data.wallets) {
+    if (typeof w.name !== 'string' || !validAmount(w.initial)) throw new Error('bad wallet');
+    for (const field of ['closingDay','payDay']) if (w[field] !== undefined && (!Number.isInteger(w[field]) || w[field] < 1 || w[field] > 31)) throw new Error('bad card day');
+    if (w.payMonthOffset !== undefined && ![0,1,2].includes(w.payMonthOffset)) throw new Error('bad card offset');
+    if (w.notifyDays !== undefined && (!Number.isInteger(w.notifyDays) || w.notifyDays < 0 || w.notifyDays > 365)) throw new Error('bad notification');
+    if (w.payWalletId !== undefined && (!validId(w.payWalletId) || !walletIds.has(w.payWalletId))) throw new Error('bad wallet');
+  }
+  for (const t of data.txs) {
+    for (const key of ['memo','category','settleKey']) if (t[key] !== undefined && typeof t[key] !== 'string') throw new Error('bad transaction text');
+    if (!['expense', 'income', 'transfer'].includes(t.type) || !validAmount(t.amount) || !validBackupDate(t.date) || !walletIds.has(t.walletId)) throw new Error('bad transaction');
+    if (t.type === 'transfer' && (!walletIds.has(t.toWalletId) || t.toWalletId === t.walletId)) throw new Error('bad transfer');
+  }
+  for (const b of bills) {
+    for (const key of ['tag','category','freq']) if (b[key] !== undefined && typeof b[key] !== 'string') throw new Error('bad bill text');
+    if (typeof b.name !== 'string' || !validAmount(b.amount) || !walletIds.has(b.walletId)) throw new Error('bad bill');
+    if (!Number.isInteger(b.day) || b.day < 1 || b.day > 31) throw new Error('bad bill');
+  }
+  return { ...seed(), ...data, bills, settings: { ...seed().settings, ...(data.settings || {}) } };
+}
+
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
-    if (s && Array.isArray(s.wallets)) return { ...seed(), ...s, settings: { ...seed().settings, ...s.settings } };
+    if (s) return prepareBackup(s);
   } catch (e) { /* ignore */ }
   return seed();
 }
@@ -1196,6 +1237,7 @@ function exportIcs() {
     );
   };
   for (const b of bills) {
+    for (const key of ['tag','category','freq']) if (b[key] !== undefined && typeof b[key] !== 'string') throw new Error('bad bill text');
     event({
       uid: b.id, day: b.day, notifyDays: b.notifyDays, every: Number(b.every) || 1, occurs: (y, m) => billOccurs(b, y, m),
       summary: `${b.name} ${b.variable ? '約' : ''}${yen(b.amount)}${billType(b) === 'income' ? '（入金）' : ''}`,
@@ -1482,40 +1524,6 @@ function download(name, text, type) {
   a.href = url; a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-const BACKUP_MAX_BYTES = 10 * 1024 * 1024;
-const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-const validId = (v) => typeof v === 'string' && v.length > 0 && v.length <= 200;
-const validAmount = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
-function validBackupDate(v) {
-  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
-  const d = parseYmd(v);
-  return !Number.isNaN(d.getTime()) && ymd(d) === v;
-}
-function uniqueIds(items) {
-  const ids = items.map((x) => x?.id);
-  return ids.every(validId) && new Set(ids).size === ids.length;
-}
-function prepareBackup(data) {
-  if (!isObject(data) || !Array.isArray(data.wallets) || !data.wallets.length || !Array.isArray(data.txs)) throw new Error('bad backup');
-  const bills = data.bills === undefined ? [] : data.bills;
-  if (!Array.isArray(bills) || !uniqueIds(data.wallets) || !uniqueIds(data.txs) || !uniqueIds(bills)) throw new Error('bad backup');
-  if (data.settings !== undefined && !isObject(data.settings)) throw new Error('bad backup');
-
-  const walletIds = new Set(data.wallets.map((w) => w.id));
-  for (const w of data.wallets) {
-    if (typeof w.name !== 'string' || !validAmount(w.initial)) throw new Error('bad wallet');
-    if (w.payWalletId !== undefined && (!validId(w.payWalletId) || !walletIds.has(w.payWalletId))) throw new Error('bad wallet');
-  }
-  for (const t of data.txs) {
-    if (!['expense', 'income', 'transfer'].includes(t.type) || !validAmount(t.amount) || !validBackupDate(t.date) || !walletIds.has(t.walletId)) throw new Error('bad transaction');
-    if (t.type === 'transfer' && (!walletIds.has(t.toWalletId) || t.toWalletId === t.walletId)) throw new Error('bad transfer');
-  }
-  for (const b of bills) {
-    if (typeof b.name !== 'string' || !validAmount(b.amount) || !walletIds.has(b.walletId)) throw new Error('bad bill');
-    if (!Number.isInteger(b.day) || b.day < 1 || b.day > 31) throw new Error('bad bill');
-  }
-  return { ...seed(), ...data, bills, settings: { ...seed().settings, ...(data.settings || {}) } };
 }
 function importJson() {
   const input = document.createElement('input');
