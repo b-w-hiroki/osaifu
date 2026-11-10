@@ -14,3 +14,11 @@ test('independent edits on two simulated clients converge',()=>{const old={a:rec
 test('unchanged remote deletion does not revive on a clean client',()=>{const old={t:rec(100)};assert.deepEqual(normalize(merge(old,base(old),{})),{recs:{},push:[],del:[]});});
 test('local deletion of unchanged remote produces one delete',()=>{const old={t:rec(100)};assert.deepEqual(normalize(merge({},base(old),old)),{recs:{},push:[],del:['t']});});
 test('concurrent remote edit survives a local delete per current policy',()=>{const old={t:rec(100)};assert.deepEqual(normalize(merge({},base(old),{t:rec(300)})),{recs:{t:rec(300)},push:[],del:[]});});
+
+test('local edit survives concurrent remote deletion and is sent back',()=>{
+  const old={t:rec(100)};
+  assert.deepEqual(normalize(merge({t:rec(300)},base(old),{})),{recs:{t:rec(300)},push:['t'],del:[]});
+});
+test('both clients deleting a record does not create an extra write',()=>{
+  assert.deepEqual(normalize(merge({},base({t:rec(100)}),{})),{recs:{},push:[],del:[]});
+});

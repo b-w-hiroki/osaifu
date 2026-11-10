@@ -415,3 +415,8 @@ details.map summary { font-size: 13px; color: var(--muted); cursor: pointer; }
 .ad-slot .ad-label { font-size: 10px; color: var(--muted); letter-spacing: .12em; margin-bottom: 4px; font-weight: 600; }
 .ad-slot .ad-content { display: flex; justify-content: center; align-items: center; min-height: 50px; }
 .login > .ad-slot { width: 100%; max-width: 380px; margin: 0 auto 16px; }
+
+/* Keep sync guidance readable without crowding account controls. */
+.sync-help { margin: 8px 0 16px; font-size: 14px; line-height: 1.7; }
+.sync-help summary { cursor: pointer; padding: 12px 0; }
+.sync-help p { margin: 8px 0; }
