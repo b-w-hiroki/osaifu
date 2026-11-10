@@ -737,7 +737,12 @@ function syncRow() {
   return `<div class="set-row">
       <div class="row-main"><div class="t">${on ? 'アカウント' : 'ログイン'}</div>${on ? `<div class="s">${esc(Sync.email)} ${SYNC_LABEL[Sync.status] || ''}</div>` : ''}</div>
       ${on ? '<button class="btn ghost sm" data-act="sync-out">ログアウト</button>' : '<button class="btn sm" data-act="sync-in">ログイン</button>'}
-    </div>`;
+    </div>
+    <details class="sync-help">
+      <summary>複数端末で使うときの注意</summary>
+      <p>同じ記録の同時操作は避けてください。削除と編集が競合すると編集が残り、削除した記録が再表示されることがあります。</p>
+      <p>各端末の同期を待って内容を確認し、必要な場合だけ再度削除してください。大きな変更の前にはバックアップを保存しましょう。</p>
+    </details>`;
 }
 
 function walletView() {

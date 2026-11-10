@@ -52,3 +52,21 @@ test('ログインを選ぶと既存の認証画面へ進み、設定からabout
   await page.locator('#aboutClose').click();
   await expect(page.locator('#aboutDialog')).not.toHaveAttribute('open', '');
 });
+
+test('同期の削除・編集注意は設定で開閉でき、狭い画面でも読める（mock）', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.goto('/app.html');
+  await page.getByRole('button', { name: 'はじめる', exact: true }).click();
+  await page.locator('[data-tab="wallet"]').click();
+  const help = page.locator('.sync-help');
+  const summary = help.locator('summary');
+  await expect(summary).toBeVisible();
+  await expect(help).not.toHaveAttribute('open', '');
+  await summary.click();
+  await expect(help).toHaveAttribute('open', '');
+  await expect(help).toContainText('削除と編集が競合すると編集が残り');
+  await expect(help).toContainText('各端末の同期を待って内容を確認');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  await summary.click();
+  await expect(help).not.toHaveAttribute('open', '');
+});
