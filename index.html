@@ -164,6 +164,27 @@
       .phone img { border-radius: 21px; }
       .chip { font-size: 12px; padding: 6px 10px; }
     }
+  
+    .product-story figcaption, .story-step { color: var(--primary-ink); }
+    .story-step { background: var(--primary-soft); border-radius: 12px; min-height: 44px; display: grid; place-items: center; }
+    /* Product story: illustration of a use case, not an interactive app screen. */
+    .product-story { min-width: 0; margin: 0; padding: 24px; border: 1px solid var(--line, var(--border)); border-radius: 24px; background: var(--surface); box-shadow: var(--shadow, 0 16px 40px rgb(0 0 0 / .08)); }
+    .product-story figcaption { font-size: 12px; font-weight: 700; letter-spacing: .08em; margin-bottom: 18px; }
+    .product-story h2 { font-size: clamp(24px, 5vw, 32px); line-height: 1.4; margin: 0 0 20px; }
+    .story-note { font-size: 12px; line-height: 1.6; margin: 16px 0 0; color: var(--muted); }
+    .story-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+    .story-steps li { display: grid; grid-template-columns: 44px 1fr; gap: 12px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--line, var(--border)); }
+    .story-steps li:last-child { border-bottom: 0; }
+    .story-step { font-size: 13px; font-weight: 800; }
+    .story-steps strong { display: block; font-size: 18px; line-height: 1.5; }
+    .story-steps small { display: block; font-size: 13px; line-height: 1.7; }
+    .story-amount { font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 800; }
+    .story-status { display: inline-block; padding: 3px 10px; border: 1px solid currentColor; border-radius: 99px; font-size: 12px; }
+    .story-calendar { border: 1px solid var(--line, var(--border)); border-radius: 16px; overflow: hidden; }
+    .story-calendar img { display: block; width: 100%; height: auto; }
+    .story-milk { width: 64px; height: 64px; float: right; margin-left: 12px; }
+    @media (max-width: 480px) { .product-story { padding: 20px; border-radius: 20px; } }
+
   </style>
 
   <!-- birdman studio の姉妹アプリ導線（4アプリ共通）。アプリ一覧は sister-apps.js の APPS だけを編集する -->
@@ -228,12 +249,16 @@
           </div>
           <p class="note">インストール不要。iPhone / Android のブラウザで開いて「ホーム画面に追加」するとアプリのように使えます。</p>
         </div>
-        <div class="phones" aria-hidden="true">
-          <div class="phone p1"><img src="images/screen-home.jpg" alt="" width="390" height="664"></div>
-          <div class="phone p2"><img src="images/screen-calendar.jpg" alt="" width="390" height="664"></div>
-          <div class="chip c1"><small>今日</small>動画サブスク <span class="num due">¥1,490</span></div>
-          <div class="chip c2"><small>10日 引き落とし</small>カード <span class="num">¥22,030</span></div>
-        </div>
+        <figure class="product-story" aria-label="支払い予定の利用イメージ">
+          <figcaption>いつ、いくら。先に見える。</figcaption>
+          <h2>支払い日までを、<br>ひとつの流れに。</h2>
+          <ol class="story-steps">
+            <li><span class="story-step">10日</span><div><small>予定を登録</small><strong>カードの引き落とし</strong><span class="story-amount">¥22,030</span></div></li>
+            <li><span class="story-step">期日前</span><div><strong>カレンダーで確認</strong><small>支払い予定と口座残高を見比べる</small></div></li>
+            <li><span class="story-step">確認後</span><div><strong>記録をつけて、ひと安心。</strong><small>支払いの状況を自分で確認・記録</small></div></li>
+          </ol>
+          <p class="story-note">利用イメージ・金額はサンプルです。銀行との自動連携ではありません。</p>
+        </figure>
       </div>
     </div>
 
