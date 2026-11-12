@@ -420,3 +420,12 @@ details.map summary { font-size: 13px; color: var(--muted); cursor: pointer; }
 .sync-help { margin: 8px 0 16px; font-size: 14px; line-height: 1.7; }
 .sync-help summary { cursor: pointer; padding: 12px 0; }
 .sync-help p { margin: 8px 0; }
+
+/* First-use home: one clear next action, without sample financial data. */
+.first-payment { border: 1px solid var(--primary); background: var(--primary-soft); padding: 20px; }
+.first-payment-kicker { display: block; color: var(--primary); font-size: 12px; font-weight: 700; letter-spacing: .12em; margin-bottom: 10px; }
+.first-payment h2 { font-size: clamp(19px, 5.2vw, 24px); line-height: 1.4; margin: 0 0 10px; }
+.first-payment p { margin: 0 0 18px; font-size: 14px; line-height: 1.75; }
+.first-payment .btn { min-height: 48px; font-weight: 700; }
+.first-payment-note { display: block; margin-top: 12px; font-size: 12px; color: var(--text); }
+.summary-caption { color: var(--muted); font-size: 12px; margin-bottom: 6px; }

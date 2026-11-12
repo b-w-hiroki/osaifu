@@ -554,6 +554,7 @@ function txRow(t) {
 
 function homeView() {
   const { y, m } = UI;
+  const firstPayment = S.txs.length === 0 && S.bills.length === 0;
   const tot = totals(y, m);
   const budget = Number(S.settings.budget) || 0;
   const bills = monthItems(y, m);
@@ -581,7 +582,15 @@ function homeView() {
     </div>` : '';
 
   return `
+  ${firstPayment ? `<section class="card first-payment" aria-labelledby="first-payment-title">
+    <span class="first-payment-kicker">はじめの1件</span>
+    <h2 id="first-payment-title">次の支払いを、ひとつ登録。</h2>
+    <p>家賃やサブスクなど、毎月の支払いから。<br>日付と金額が、カレンダーに並びます。</p>
+    <button class="btn block" data-act="new-bill">＋ 支払いを登録</button>
+    <span class="first-payment-note">収入・支出の記録は下の「＋」から</span>
+  </section>` : ''}
   <section class="card summary">
+    <div class="summary-caption">${firstPayment ? '今月の収支 · まだ記録がありません' : '今月の収支'}</div>
     <div class="big num ${tot.net < 0 ? 'expense' : ''}">${signed(tot.net)}</div>
     <div class="row">
       <div class="pill"><span class="label">収入</span><b class="num income">${yen(tot.income)}</b></div>
@@ -590,7 +599,7 @@ function homeView() {
     ${budgetHtml}
   </section>
 
-  <section class="card">
+  ${firstPayment ? '' : `<section class="card">
     <div class="card-head">
       <h2>支払い</h2>
       ${unpaidSum ? `<span class="head-val num">残り ${yen(unpaidSum)}</span>` : bills.length && !unpaid.length ? '<span class="head-val">完了</span>' : ''}
@@ -598,7 +607,7 @@ function homeView() {
     ${bills.length ? `<div class="rows">${shown.map(billRow).join('')}</div>
       ${bills.length > shown.length ? `<button class="link more" data-goto="cal">ほか${bills.length - shown.length}件</button>` : ''}`
       : '<div class="empty"><button class="btn sm" data-act="new-bill">＋ 支払いを登録</button></div>'}
-  </section>
+  </section>`}
 
   <section class="card">
     <div class="card-head"><h2>財布</h2><span class="head-val num">${yen(totalBal)}</span></div>
